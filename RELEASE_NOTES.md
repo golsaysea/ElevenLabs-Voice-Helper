@@ -1,6 +1,8 @@
-﻿# Release v3.3.0
+# Release v3.3.0
 
-- First-segment instant preview with local cache reuse.
-- Punctuation and short-clause aware duration estimation.
-- Automatic 2-part balanced splitting for segments exceeding 180 seconds.
-- Integrated multi-tab studio modal with system-pool priority routing.
+## 新增与优化功能 (What's New)
+
+- **🧹 声音清理与重名去重 (`清理声音`)**：自动检测账号内同名重复声音，默认保留第 1 个并勾选多余副本；支持搜索过滤误复制的声音、预览试听、一键从 ElevenLabs 云端删除或本地隐藏，同时主界面下拉框默认自动折叠同名声音。
+- **🎵 音乐生成默认免费 BGM 降级 + 付费模型兼容回退**：默认使用免费账号可用的 BGM 配乐模式 (`/v1/sound-generation`)，当手动指定付费账号与付费音乐模型 (`music_v2_5` / `music_v2` / `music_v1`) 时走 `/v1/music` 并支持模型不兼容时自动回退至 `music_v1`。
+- **🔄 TTS 模型自动兼容回退与下载防卡死**：当 `eleven_v4` 等模型在当前接口不可用时自动平滑回退至 `eleven_multilingual_v2` / `eleven_flash_v2_5`，下载落盘增加轮询与超时兜底保护。
+- **🔊 首句试听 & ✂️ 超 3 分钟智能分 2 段**：支持单段首句缓存试听、标点短句智能时长判断及超 3 分钟文案按语义边界自动拆分为 2 份。

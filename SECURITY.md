@@ -1,27 +1,26 @@
-# Security Policy
+# 安全策略 / Security Policy
 
-## Supported Versions
+## 支持版本 (Supported Versions)
 
-| Version | Supported |
-|---------|-----------|
-| v3.3.0 | Yes |
+| 版本 (Version) | 支持状态 (Supported) |
+|---|---|
+| `v3.3.0` | ✅ 支持 |
 
-## Reporting a Vulnerability
+## 漏洞报告 (Reporting a Vulnerability)
 
-Please report security issues privately via GitHub Security Advisories. Do not post live API keys, Bearer tokens, cookies, or sensitive request headers in public issues.
+请通过 GitHub Security Advisories 私密提交安全问题报告。切勿在公开 Issue 中粘贴真实的 API Key、Bearer Token、Cookie 或包含凭据的请求头。
 
-## Credential & Data Handling
+## 凭据与数据处理安全规范 (Credential & Data Handling)
 
-- Browser extensions store credentials strictly inside local browser storage (chrome.storage.local).
-- Never commit API keys, tokens, cookies, or account recovery snapshots to Git.
-- The automated release workflow uses only the ephemeral GITHUB_TOKEN and OIDC token to package archives, generate SPDX SBOMs, and sign GitHub Artifact Attestations.
+- 浏览器扩展仅在本地浏览器存储 (`chrome.storage.local`) 中保存用户凭据。
+- 严禁将任何真实 API Key、Token、私钥或账号恢复快照提交至 Git 仓库。
+- 自动化发布工作流仅使用临时 `GITHUB_TOKEN` 与 OIDC 令牌完成打包、SPDX SBOM 生成与构件签名证明。
 
-## Release Security Artifacts
+## 发布安全构件 (Release Security Artifacts)
 
-Every tagged release includes:
+每次版本发布均包含以下可验证构件：
 
-- Verified .zip extension packages ($(elevenlabs-token-helper-v3.3.0 elevenlabs-api-helper-v6.6.0[0]).zip, $(elevenlabs-token-helper-v3.3.0 elevenlabs-api-helper-v6.6.0[1]).zip)
-- SHA256SUMS.txt
-- SBOM.spdx.json (SPDX 2.3 format)
-- BUILD-PROVENANCE.txt
-- GitHub OIDC Artifact Attestation (ctions/attest@v4)
+- 经过合规校验的扩展压缩包：`elevenlabs-token-helper-v3.3.0.zip`、`elevenlabs-api-helper-v6.6.0.zip`
+- `SHA256SUMS.txt`（SHA-256 哈希校验清单）
+- `SBOM.spdx.json`（SPDX 2.3 标准软件物料清单）
+- `BUILD-PROVENANCE.txt`（构建溯源元数据）

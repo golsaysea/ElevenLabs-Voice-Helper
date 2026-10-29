@@ -1,6 +1,7 @@
 ---
 name: license-audit
-description: 渚濊禆鍗忚鍚堣妫€鏌?鈥?褰撲緷璧栨枃浠舵垨澶栭儴 CDN 渚濊禆鍙樻洿鏃惰嚜鍔ㄦ鏌ュ崗璁悎瑙勬€?triggers:
+description: 依赖协议合规检查 — 当依赖文件或外部 CDN 依赖变更时自动检查协议合规性
+triggers:
   - file_changed: "package.json"
   - file_changed: "go.mod"
   - file_changed: "requirements.txt"
@@ -12,50 +13,70 @@ description: 渚濊禆鍗忚鍚堣妫€鏌?鈥?褰撲緷璧栨枃浠舵�
   - file_changed: "*.HTML"
 ---
 
-# 渚濊禆鍗忚瀹¤ Skill
+# 依赖协议审计 Skill
 
-## 浣曟椂浣跨敤
+## 何时使用
 
-褰撶敤鎴蜂慨鏀逛緷璧栧０鏄庢枃浠躲€丳ython import銆丠TML CDN 鑴氭湰寮曠敤鎴栨墿灞曡祫婧愬紩鐢ㄦ椂锛岃Е鍙戞湰 Skill銆?
-## 涓嶈浣跨敤
+当用户修改依赖声明文件、Python import、HTML CDN 脚本引用或扩展资源引用时，触发本 Skill。
 
-褰撶敤鎴峰彧鏄槄璇绘垨鏌ョ湅渚濊禆鏂囦欢鑰屾病鏈変慨鏀规椂锛屼笉瑕佽Е鍙戞湰 Skill銆?
-## 鎵ц姝ラ
+## 不要使用
 
-### 1. 妫€娴嬪彉鏇寸殑渚濊禆
+当用户只是阅读或查看依赖文件而没有修改时，不要触发本 Skill。
 
-瀵规瘮褰撳墠渚濊禆鏂囦欢涓庨」鐩牴鐩綍鐨?`LICENSE.LIST` 涓凡璁板綍鐨勪緷璧栵紝鎵惧嚭锛?
-- 鏂板鐨勪緷璧栵細鍦ㄤ緷璧栨枃浠舵垨 CDN 寮曠敤涓瓨鍦ㄤ絾 `LICENSE.LIST` 涓病鏈夌殑銆?- 鐗堟湰鍙樻洿鐨勪緷璧栵細鐗堟湰鍙峰彂鐢熷彉鍖栫殑銆?- 绉婚櫎鐨勪緷璧栵細鍦?`LICENSE.LIST` 涓瓨鍦ㄤ絾渚濊禆鏂囦欢鎴?CDN 寮曠敤涓凡鍒犻櫎鐨勩€?
-### 2. 鏌ヨ鏂板/鍙樻洿渚濊禆鐨勫崗璁?
-瀵规柊澧炴垨鐗堟湰鍙樻洿鐨勪緷璧栵紝浣跨敤 WebSearch 鏌ヨ鍏跺崗璁細
+## 执行步骤
 
-- npm 鍖咃細鎼滅储 `<鍖呭悕> npm package license`
-- Go 妯″潡锛氭悳绱?`<妯″潡璺緞> go module license`
-- Python 鍖咃細鎼滅储 `<鍖呭悕> pypi license`
-- Rust 鍖咃細鎼滅储 `<鍖呭悕> crates.io license`
-- .NET 鍖咃細鎼滅储 `<鍖呭悕> nuget license`
-- CDN 渚濊禆锛氭悳绱?`<搴撳悕> <鐗堟湰> license cdnjs` 鎴?`<搴撳悕> github LICENSE file`
+### 1. 检测变更的依赖
 
-濡傛灉鎼滅储缁撴灉涓嶆槑纭紝浜屾鎼滅储锛歚<鍖呭悕> github LICENSE file`銆傛棤娉曠‘瀹氱殑鏍囪涓?`UNKNOWN`銆?
-### 3. 妫€鏌ュ崗璁吋瀹规€?
-璇诲彇椤圭洰鏍圭洰褰曠殑 `LICENSE` 鍜?`LICENSE.COMPLIANCE.md`锛岃瘑鍒」鐩崗璁€傚鏂板鎴栫増鏈彉鏇寸殑渚濊禆锛屽弬鑰冨崗璁吋瀹规€х煩闃碉細
+对比当前依赖文件与项目根目录的 `LICENSE.LIST` 中已记录的依赖，找出：
+
+- 新增的依赖：在依赖文件或 CDN 引用中存在但 `LICENSE.LIST` 中没有的。
+- 版本变更的依赖：版本号发生变化的。
+- 移除的依赖：在 `LICENSE.LIST` 中存在但依赖文件或 CDN 引用中已删除的。
+
+### 2. 查询新增/变更依赖的协议
+
+对新增或版本变更的依赖，使用 WebSearch 查询其协议：
+
+- npm 包：搜索 `<包名> npm package license`
+- Go 模块：搜索 `<模块路径> go module license`
+- Python 包：搜索 `<包名> pypi license`
+- Rust 包：搜索 `<包名> crates.io license`
+- .NET 包：搜索 `<包名> nuget license`
+- CDN 依赖：搜索 `<库名> <版本> license cdnjs` 或 `<库名> github LICENSE file`
+
+如果搜索结果不明确，二次搜索：`<包名> github LICENSE file`。无法确定的标记为 `UNKNOWN`。
+
+### 3. 检查协议兼容性
+
+读取项目根目录的 `LICENSE` 和 `LICENSE.COMPLIANCE.md`，识别项目协议。对新增或版本变更的依赖，参考协议兼容性矩阵：
 
 https://tpscsm-docs.pages.dev/license-audit/
 
-涓嶅吋瀹规椂璀﹀憡鐢ㄦ埛骞剁粰鍑轰慨澶嶅缓璁紝渚嬪鏇存崲椤圭洰鍗忚銆佹浛鎹緷璧栨垨绉婚櫎渚濊禆銆?
-### 4. 鏇存柊鏂囦欢
+不兼容时警告用户并给出修复建议，例如更换项目协议、替换依赖或移除依赖。
 
-1. 鏇存柊 `LICENSE.LIST`锛氭坊鍔犮€佹洿鏂版垨绉婚櫎渚濊禆鏉＄洰锛屽苟鏇存柊缁熻鎽樿銆?2. 鏇存柊 `LICENSE.COMPLIANCE.md`锛氶噸鏂板垎鏋愬崗璁吋瀹规€с€佺户鎵块檺鍒跺拰绗笁鏂瑰０鏄庛€?3. 鏇存柊 `DEPENDENCY_LICENSE_AUDIT.zh-CN.md`锛氬悓姝ュ畬鏁翠腑鏂囧璁℃姤鍛娿€?
-### 5. 椋庨櫓鏍囪
+### 4. 更新文件
 
-- 鉁?浣庨闄╋細MIT銆丅SD銆両SC銆丄pache-2.0銆乁nlicense銆丆C0-1.0
-- 鈿狅笍 闇€鍏虫敞锛欸PL銆丄GPL銆丩GPL銆丮PL銆丅SL銆丼SPL
-- 鉂?闇€纭锛歎NKNOWN銆丆C-BY-NC銆佽嚜瀹氫箟鍗忚
+1. 更新 `LICENSE.LIST`：添加、更新或移除依赖条目，并更新统计摘要。
+2. 更新 `LICENSE.COMPLIANCE.md`：重新分析协议兼容性、继承限制和第三方声明。
+3. 更新 `DEPENDENCY_LICENSE_AUDIT.zh-CN.md`：同步完整中文审计报告。
 
-### 6. 閫氱煡鐢ㄦ埛
+### 5. 风险标记
 
-瀹屾垚鍚庨€氱煡鐢ㄦ埛锛?
-- 鏂板銆佹洿鏂般€佺Щ闄ょ殑渚濊禆鏁伴噺銆?- 鏂板鎴栧彉鏇翠緷璧栫殑鍗忚鍒楄〃銆?- 鍏煎鎬ф鏌ョ粨璁恒€?- 鏄惁瀛樺湪鏂板椋庨櫓鍗忚鎴?UNKNOWN 鍗忚銆?
-## 閲嶈璇存槑
+- ✅ 低风险：MIT、BSD、ISC、Apache-2.0、Unlicense、CC0-1.0
+- ⚠️ 需关注：GPL、AGPL、LGPL、MPL、BSL、SSPL
+- ❌ 需确认：UNKNOWN、CC-BY-NC、自定义协议
 
-- 鍙璁＄洿鎺ヤ緷璧栵紝涓嶅璁′紶閫掍緷璧栥€?- `UNKNOWN` 鍗忚闇€瑕佺敤鎴锋墜鍔ㄧ‘璁ゃ€?- 鏈粨搴撳綋鍓嶅洜 `pedalboard` 浣跨敤 GPL-3.0-only 浣滀负椤圭洰鍙戝竷鍗忚锛涘绉婚櫎姝や緷璧栵紝鍙噸鏂拌瘎浼伴」鐩崗璁€?
+### 6. 通知用户
+
+完成后通知用户：
+
+- 新增、更新、移除的依赖数量。
+- 新增或变更依赖的协议列表。
+- 兼容性检查结论。
+- 是否存在新增风险协议或 UNKNOWN 协议。
+
+## 重要说明
+
+- 只审计直接依赖，不审计传递依赖。
+- `UNKNOWN` 协议需要用户手动确认。
+- 本仓库当前因 `pedalboard` 使用 GPL-3.0-only 作为项目发布协议；如移除此依赖，可重新评估项目协议。

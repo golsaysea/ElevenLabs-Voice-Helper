@@ -1,7 +1,7 @@
-# Privacy Policy
+# 隐私政策声明 / Privacy Policy
 
-## Data Storage & Processing
+## 数据存储与处理边界 (Data Storage & Processing)
 
-- All user preferences, task drafts, and session credentials are stored exclusively in the local browser profile via chrome.storage.local and IndexedDB.
-- This extension does not collect telemetry, analytics, or crash reports, and does not transmit data to any third-party analytics or tracking servers.
-- Network requests are sent directly from the user's browser only to the configured API endpoints declared in manifest.json.
+- 所有用户配置、文案草稿、声音偏好及会话凭据均仅保存在用户本机浏览器的 `chrome.storage.local` 与 `IndexedDB` 中。
+- 本扩展程序不收集任何遥测数据、统计分析或崩溃报告，也不会向任何第三方统计或追踪服务器发送数据。
+- 网络请求仅在用户主动执行语音合成或声音管理操作时，从用户浏览器直接发送至 `manifest.json` 中声明的官方 API 域名。
