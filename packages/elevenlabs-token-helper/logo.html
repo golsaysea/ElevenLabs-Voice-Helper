@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>生成专属 Logo</title>
+</head>
+<body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+  <h2>正在施展 AI 魔法... 🪄</h2>
+  <script>
+    // 这是我为你手绘的渐变麦克风矢量图代码
+    const svgCode = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+      <defs>
+        <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#4f46e5" />
+          <stop offset="100%" stop-color="#ec4899" />
+        </linearGradient>
+      </defs>
+      <rect x="46" y="16" width="36" height="56" rx="18" fill="url(#g)" />
+      <path d="M 28 50 V 60 Q 28 86 64 86 Q 100 86 100 60 V 50" fill="none" stroke="#6b7280" stroke-width="10" stroke-linecap="round" />
+      <line x1="64" y1="86" x2="64" y2="112" stroke="#6b7280" stroke-width="10" stroke-linecap="round" />
+      <line x1="40" y1="112" x2="88" y2="112" stroke="#6b7280" stroke-width="10" stroke-linecap="round" />
+      <path d="M 96 24 Q 104 24 104 16 Q 104 24 112 24 Q 104 24 104 32 Q 104 24 96 24" fill="#fbbf24" />
+      <path d="M 16 36 Q 22 36 22 30 Q 22 36 28 36 Q 22 36 22 42 Q 22 36 16 36" fill="#fbbf24" />
+    </svg>`;
+
+    // 利用浏览器自带的 Canvas 引擎把它渲染成透明背景的 PNG
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0);
+      const a = document.createElement('a');
+      a.download = 'icon.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click(); // 自动触发下载
+      document.body.innerHTML = '<h2>✅ icon.png 已经自动下载啦！</h2><p>请去浏览器的下载文件夹里找到它，把它移动到你的插件目录中替换原来的文件。</p>';
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(svgCode);
+  </script>
+</body>
+</html>

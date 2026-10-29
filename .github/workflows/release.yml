@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  package:
+    name: Validate, package and attest release assets
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate repository security and compliance
+        shell: pwsh
+        run: ./scripts/validate-release.ps1
+
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $dist = Join-Path $PWD "dist"
+          if (Test-Path -LiteralPath $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          $commonNotices = @(
+            "LICENSE",
+            "LICENSE.LIST",
+            "LICENSE.COMPLIANCE.md",
+            "DEPENDENCY_LICENSE_AUDIT.md",
+            "THIRD_PARTY_NOTICES.md",
+            "PRIVACY.md",
+            "SECURITY.md",
+            "SECURITY-ARTIFACTS.md"
+          )
+
+          $assets = @(
+            @{ Name = "elevenlabs-token-helper-v3.3.0"; Path = "packages/elevenlabs-token-helper" },
+            @{ Name = "elevenlabs-api-helper-v6.6.0"; Path = "packages/elevenlabs-api-helper" }
+          )
+
+          foreach ($asset in $assets) {
+            $source = Join-Path $PWD $asset.Path
+            $stage = Join-Path $env:RUNNER_TEMP $asset.Name
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+            Get-ChildItem -LiteralPath $source -Force | ForEach-Object {
+              Copy-Item -LiteralPath $_.FullName -Destination $stage -Recurse -Force
+            }
+            foreach ($notice in $commonNotices) {
+              $noticePath = Join-Path $PWD $notice
+              if (Test-Path -LiteralPath $noticePath) {
+                Copy-Item -LiteralPath $noticePath -Destination $stage -Force
+              }
+            }
+
+            $zipPath = Join-Path $dist "$($asset.Name).zip"
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath)
+            ./scripts/validate-release.ps1 -PackagePath $zipPath
+          }
+
+      - name: Generate checksums, SBOM and provenance metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dist = Join-Path $PWD "dist"
+
+          Get-ChildItem -LiteralPath $dist -Filter "*.zip" | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -LiteralPath (Join-Path $dist "SHA256SUMS.txt") -Encoding utf8NoBOM
+
+          $created = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $namespaceCommit = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } else { "manual" }
+          $sbom = [ordered]@{
+            spdxVersion = "SPDX-2.3"
+            dataLicense = "CC0-1.0"
+            SPDXID = "SPDXRef-DOCUMENT"
+            name = "Zephyr Bridge Extension SBOM"
+            documentNamespace = "https://github.com/$env:GITHUB_REPOSITORY/spdx/$namespaceCommit"
+            creationInfo = [ordered]@{
+              created = $created
+              creators = @("Tool: GitHub Actions release workflow")
+            }
+            packages = @(
+              [ordered]@{
+                name = "elevenlabs-token-helper-v3.3.0"
+                SPDXID = "SPDXRef-Package-1"
+                versionInfo = "v3.3.0"
+                downloadLocation = "https://github.com/$env:GITHUB_REPOSITORY"
+                filesAnalyzed = $false
+                licenseConcluded = "GPL-3.0-only"
+                licenseDeclared = "GPL-3.0-only"
+                copyrightText = "NOASSERTION"
+              },
+              [ordered]@{
+                name = "elevenlabs-api-helper-v6.6.0"
+                SPDXID = "SPDXRef-Package-2"
+                versionInfo = "v3.3.0"
+                downloadLocation = "https://github.com/$env:GITHUB_REPOSITORY"
+                filesAnalyzed = $false
+                licenseConcluded = "GPL-3.0-only"
+                licenseDeclared = "GPL-3.0-only"
+                copyrightText = "NOASSERTION"
+              }
+            )
+          }
+          $sbom | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $dist "SBOM.spdx.json") -Encoding utf8NoBOM
+
+          $provenance = @"
+          release_tag=$env:GITHUB_REF_NAME
+          repository=$env:GITHUB_REPOSITORY
+          commit=$env:GITHUB_SHA
+          runner_os=$env:RUNNER_OS
+          built_at_utc=$created
+          workflow=$env:GITHUB_WORKFLOW
+          run_id=$env:GITHUB_RUN_ID
+          "@
+          $provenance.Trim() | Set-Content -LiteralPath (Join-Path $dist "BUILD-PROVENANCE.txt") -Encoding utf8NoBOM
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Generate artifact attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem -LiteralPath "dist" -File | ForEach-Object { $_.FullName }
+          gh release view $env:GITHUB_REF_NAME >$null 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME @files --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME @files --title $env:GITHUB_REF_NAME --notes-file RELEASE_NOTES.md --verify-tag
+          }

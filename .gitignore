@@ -1,0 +1,12 @@
+dist/
+build/
+node_modules/
+*.pem
+*.key
+*.p12
+*.pfx
+*.env
+.env.*
+*.mp3
+*.wav
+*.webm

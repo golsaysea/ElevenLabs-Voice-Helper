@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "ElevenLabs 批量工坊 (自动化版)",
+  "version": "6.6.0",
+  "description": "超大窗口，支持网页自动化操作，一键配置 API 权限。",
+  "permissions": [
+    "storage",
+    "downloads",
+    "system.display",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.elevenlabs.io/*",
+    "https://elevenlabs.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "打开批量工坊"
+  },
+  "icons": {
+     "16": "icon.png",
+     "48": "icon.png",
+     "128": "icon.png"
+  }
+}

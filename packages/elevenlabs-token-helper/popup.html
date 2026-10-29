@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>ElevenLabs 批量工坊 Pro</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <div class="sidebar">
+    <div class="sidebar-header">
+        <div class="brand">
+          <img src="icon.png" alt="Logo" style="width: 28px; height: 28px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));">
+          <span class="logo-text">ElevenLabs 批量 Pro</span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="sidebarOtherToolsBtn" class="icon-btn-round" title="其他工具 (音效/音乐/变声/降噪/转文字)">🧰</button>
+          <button id="themeToggle" class="icon-btn-round" title="切换亮/暗色主题">🌓</button>
+        </div>
+      </div>
+
+      <div class="account-wrapper">
+        <div class="account-status-card">
+          <div class="status-dot" id="statusDot" style="background: red;"></div>
+          <div class="account-info">
+            <div class="account-name" id="currentAliasDisplay">等待网页授权</div>
+            <div class="account-quota" id="userQuota">获取额度中...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="quick-tools" style="margin-top: 20px;">
+        <label>📁 导出子文件夹 (静默下载免弹窗)</label>
+        <div class="folder-group" style="display: flex; gap: 8px;">
+           <input type="text" id="quickFolderInput" placeholder="子文件夹名称，默认：批量导出" title="保存到浏览器下载目录下的 ElevenLabs_Pro/批量导出">
+           <a id="openFolderBtn" class="export-folder-link" href="#" title="在文件资源管理器中打开语音文件夹">📂 打开语音文件夹</a>
+        </div>
+        <div id="exportFolderStatus" class="export-folder-status" role="status" aria-live="polite"></div>
+      </div>
+      <div class="divider"></div>
+
+      <div class="control-group">
+        <div class="voice-label-row">
+          <label style="margin-bottom:0;">🗣️ Voice (选择声音)</label>
+          <button type="button" id="cleanVoicesBtn" class="btn-voice-clean" title="清理同名重复声音或误复制的多余声音">🧹 清理声音</button>
+        </div>
+        <div class="row">
+          <select id="voiceSelect"><option>等待 Token...</option></select>
+          <button id="refreshVoices" class="icon-btn-small" title="强制刷新额度与声音">🔄</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label>🧠 Model (选择模型)</label>
+        <select id="modelSelect">
+          <option value="eleven_v4" selected>Eleven v4 (默认 / 高质量 / 情绪标签)</option>
+          <option value="eleven_multilingual_v2">Multilingual v2 (经典)</option>
+          <option value="eleven_turbo_v2_5">Turbo v2.5 (极速)</option>
+          <option value="eleven_flash_v2_5">Flash v2.5 (快速)</option>
+          <option value="eleven_v3">Eleven v3 (支持笑声/情绪标签)</option>
+        </select>
+      </div>
+
+      <div id="v2Settings" class="settings-panel">
+        <div class="slider-row">
+          <label for="stabilitySlider">稳定性 <span id="stabilityValue">0.50</span></label>
+          <input type="range" id="stabilitySlider" min="0" max="100" value="50">
+        </div>
+        <div class="slider-row">
+          <label for="similaritySlider">相似度 <span id="similarityValue">0.75</span></label>
+          <input type="range" id="similaritySlider" min="0" max="100" value="75">
+        </div>
+        <div class="slider-row">
+          <label for="styleSlider">风格夸张 <span id="styleValue">0.00</span></label>
+          <input type="range" id="styleSlider" min="0" max="100" value="0">
+        </div>
+      </div>
+
+      <div id="v3Settings" class="settings-panel hidden">
+        <div class="control-group compact no-margin">
+          <label for="v3StabilitySelect">V3 Stability</label>
+          <select id="v3StabilitySelect">
+            <option value="0.30">Creative - 更有情绪</option>
+            <option value="0.50" selected>Natural - 平衡自然</option>
+            <option value="0.80">Robust - 更稳定</option>
+          </select>
+        </div>
+      </div>
+      <div class="divider"></div>
+
+      <div class="options-area">
+        <div class="toggle-row" style="margin-bottom: 10px;">
+          <label for="autoSplit3Min" title="识别预计时长超过 3 分钟的文案，按段落/句末/转折词智能拆分为 2 份" style="font-weight:bold; cursor:pointer; font-size:13px;">✂️ 超3分钟自动分2段</label>
+          <input type="checkbox" id="autoSplit3Min" checked>
+        </div>
+        <div class="toggle-row">
+          <label for="autoDelete" style="font-weight:bold; cursor:pointer; font-size:13px;">✅ 生成完自动删除对应文案</label>
+          <input type="checkbox" id="autoDelete" checked>
+        </div>
+      </div>
+      
+      <div class="status-bar" id="status">准备就绪</div>
+    </div>
+
+    <div class="content-area">
+      <div class="content-toolbar">
+        <h2>📝 文案列表 <span style="font-size:12px; font-weight:normal; color:var(--text-sub);">(支持直接粘贴 Excel/表格)</span></h2>
+        <div class="toolbar-btns">
+          <button id="otherToolsBtn" class="btn-outlined" title="打开 ElevenLabs 其他工具 (生成音效、音乐、语音变声、人声提取降噪、语音转文字)">🧰 其他工具</button>
+          <button id="clearAllBtn" class="btn-ghost">一键清空</button>
+          <button id="splitLongBtn" class="btn-outlined hidden" title="将列表中所有超过 3 分钟的文案按合适语义边界各拆分为 2 份">✂️ 超3分拆2段</button>
+          <button id="addCardBtn" class="btn-outlined">+ 新增一段</button>
+        </div>
+      </div>
+      
+      <div id="listContainer" class="cards-wrapper"></div>
+      
+      <div class="content-footer">
+        <div class="stats-info">
+           <span id="totalCharsDisplay" style="font-size:15px; font-weight:bold;">总字数: 0</span>
+           <span id="totalDurationDisplay" style="font-size:13px; color:var(--primary); font-weight:600; margin-left:10px;">预计时长: 0秒</span>
+           <span id="costEstimate" style="font-size:12px; color:var(--text-sub); margin-left:10px;">(预计消耗: 0)</span>
+        </div>
+        <div class="action-group">
+          <button id="stopBtn" class="btn-danger hidden">🛑 停止生成</button>
+          <button id="generateBtn" class="btn-primary">🚀 开始批量生成</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="otherToolsModal" class="modal-overlay hidden">
+    <div class="modal-panel other-tools-panel">
+      <div class="modal-header other-tools-header">
+        <div class="other-tools-title-wrap">
+          <h3>🧰 ElevenLabs 其他工具工坊</h3>
+          <span class="other-tools-sub">支持 AI 音效 · AI 音乐 · 语音变声 · 人声提取降噪 · 语音转文字</span>
+        </div>
+        <button id="closeOtherToolsBtn" class="close-icon" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body other-tools-body">
+        <div class="tool-tabs" role="tablist">
+          <button type="button" class="tool-tab-btn active" data-tab="sfx" role="tab" aria-selected="true">🔊 音效生成</button>
+          <button type="button" class="tool-tab-btn" data-tab="music" role="tab" aria-selected="false">🎵 音乐生成</button>
+          <button type="button" class="tool-tab-btn" data-tab="sts" role="tab" aria-selected="false">🎭 语音变声</button>
+          <button type="button" class="tool-tab-btn" data-tab="isolation" role="tab" aria-selected="false">🧹 人声提取</button>
+          <button type="button" class="tool-tab-btn" data-tab="stt" role="tab" aria-selected="false">📝 语音转文字</button>
+        </div>
+
+        <!-- 1. 音效生成 (Sound Effects) -->
+        <div class="tool-pane active" data-pane="sfx">
+          <div class="tool-field">
+            <label for="sfxPrompt">音效描述提示词 (支持中英文，越具体效果越好)</label>
+            <textarea id="sfxPrompt" rows="3" placeholder="例如：Heavy rainstorm with distant rolling thunder / 厚重的木门在安静房间里缓缓吱呀推开..."></textarea>
+            <div class="tool-preset-chips">
+              <span class="chip-label">快捷灵感:</span>
+              <button type="button" class="tool-chip" data-target="sfxPrompt" data-prompt="Cinematic deep bass braam, dramatic trailer impact">🎬 电影低音轰鸣</button>
+              <button type="button" class="tool-chip" data-target="sfxPrompt" data-prompt="Heavy rainstorm with distant rolling thunder">⛈️ 雷雨交加</button>
+              <button type="button" class="tool-chip" data-target="sfxPrompt" data-prompt="Heavy old wooden door creaking open slowly in a quiet room">🚪 木门吱呀推开</button>
+              <button type="button" class="tool-chip" data-target="sfxPrompt" data-prompt="Mechanical keyboard rapid typing in a quiet office">⌨️ 机械键盘打字</button>
+              <button type="button" class="tool-chip" data-target="sfxPrompt" data-prompt="Sci-fi futuristic laser whoosh transition sound effect">🚀 科幻转场咻声</button>
+              <button type="button" class="tool-chip" data-target="sfxPrompt" data-prompt="Warm coffee shop ambience with soft chatter and clinking cups">☕ 咖啡馆环境音</button>
+            </div>
+          </div>
+          <div class="tool-grid-2">
+            <div class="tool-field">
+              <label for="sfxDurationMode">时长模式</label>
+              <div class="tool-inline-row">
+                <select id="sfxDurationMode">
+                  <option value="auto" selected>🤖 AI 自动判断最佳时长</option>
+                  <option value="custom">⏱️ 指定秒数 (0.5 ~ 30 秒)</option>
+                </select>
+                <input type="number" id="sfxDuration" class="hidden" min="0.5" max="30" step="0.5" value="5" style="width:90px;" title="音效时长 (秒)">
+              </div>
+            </div>
+            <div class="tool-field">
+              <label for="sfxInfluence">提示词贴合度 (Prompt Influence): <span id="valSfxInfluence">0.30</span></label>
+              <input type="range" id="sfxInfluence" min="0" max="1" step="0.05" value="0.30">
+            </div>
+          </div>
+          <div class="tool-options-row">
+            <label class="tool-check-label"><input type="checkbox" id="sfxLoop"> 🔁 生成无缝循环音效 (Loop)</label>
+            <label class="tool-check-label"><input type="checkbox" id="sfxAutoDownload" checked> 💾 生成后自动保存到下载目录</label>
+          </div>
+          <div class="tool-actions-row">
+            <button type="button" id="sfxGenerateBtn" class="btn-primary tool-submit-btn">🔊 立即生成音效</button>
+          </div>
+        </div>
+
+        <!-- 2. 音乐生成 (Eleven Music) -->
+        <div class="tool-pane hidden" data-pane="music">
+          <div class="tool-field">
+            <label for="musicPrompt">音乐风格 / 情绪 / 乐器 / 歌词提示词</label>
+            <textarea id="musicPrompt" rows="3" placeholder="例如：Upbeat lo-fi hip hop beat with warm Rhodes piano and vinyl crackle, relaxing study music..."></textarea>
+            <div class="tool-preset-chips">
+              <span class="chip-label">快捷灵感:</span>
+              <button type="button" class="tool-chip" data-target="musicPrompt" data-prompt="Relaxing lo-fi chill hop beat with warm Rhodes piano, soft vinyl crackle, study background music">🎧 Lo-Fi 轻松伴奏</button>
+              <button type="button" class="tool-chip" data-target="musicPrompt" data-prompt="Epic orchestral cinematic trailer music with soaring strings, brass and powerful percussion">🎻 史诗电影管弦</button>
+              <button type="button" class="tool-chip" data-target="musicPrompt" data-prompt="Cyberpunk synthwave electronic track with driving bassline and retro 80s neon arpeggios">🌃 赛博朋克电音</button>
+              <button type="button" class="tool-chip" data-target="musicPrompt" data-prompt="Warm acoustic guitar fingerpicking folk melody, peaceful morning vibe, vlog background">🎸 木吉他清新配乐</button>
+              <button type="button" class="tool-chip" data-target="musicPrompt" data-prompt="Suspenseful dark ambient drone with subtle heartbeat pulse for mystery storytelling">🕵️ 悬疑解说背景乐</button>
+            </div>
+          </div>
+          <div class="tool-grid-2">
+            <div class="tool-field">
+              <label for="musicDurationMode">音乐时长</label>
+              <div class="tool-inline-row">
+                <select id="musicDurationMode">
+                  <option value="custom" selected>⏱️ 指定时长 (BGM 3~30s / 付费 3~300s)</option>
+                  <option value="auto">🤖 AI 自动决定时长</option>
+                </select>
+                <input type="number" id="musicDurationSec" min="3" max="300" step="1" value="22" style="width:95px;" title="音乐时长 (免费BGM最高30秒，付费模型最高300秒)">
+              </div>
+            </div>
+            <div class="tool-field">
+              <label for="musicModel">音乐模型</label>
+              <select id="musicModel">
+                <option value="bgm_default" selected>免费 BGM 配乐模式 (默认·兼容免费号)</option>
+                <option value="music_v1">Eleven Music v1 (付费账号专属)</option>
+                <option value="music_v2">Eleven Music v2 (付费账号专属)</option>
+                <option value="music_v2_5">Eleven Music v2.5 (付费账号专属)</option>
+                <option value="auto">Eleven Music 自动兼容 (付费账号专属)</option>
+              </select>
+            </div>
+          </div>
+          <div class="tool-options-row">
+            <label class="tool-check-label"><input type="checkbox" id="musicInstrumental" checked> 🎹 纯音乐伴奏 (不含人声演唱 / Instrumental)</label>
+            <label class="tool-check-label"><input type="checkbox" id="musicAutoDownload" checked> 💾 生成后自动保存到下载目录</label>
+          </div>
+          <div class="tool-actions-row">
+            <button type="button" id="musicGenerateBtn" class="btn-primary tool-submit-btn">🎵 立即生成音乐</button>
+          </div>
+        </div>
+
+        <!-- 3. 语音变声 (Speech-to-Speech) -->
+        <div class="tool-pane hidden" data-pane="sts">
+          <div class="tool-field">
+            <label for="stsAudioFile">上传源音频 (保留原录音的语气节奏，替换为目标音色)</label>
+            <input type="file" id="stsAudioFile" accept="audio/*,video/*" class="tool-file-input">
+          </div>
+          <div class="tool-grid-2">
+            <div class="tool-field">
+              <label for="stsCustomVoiceId">目标声音 (默认跟随左侧主界面选中声音)</label>
+              <input type="text" id="stsCustomVoiceId" placeholder="留空则使用左侧选中的声音，也可直接粘贴目标 Voice ID">
+            </div>
+            <div class="tool-field">
+              <label for="stsModel">变声模型</label>
+              <select id="stsModel">
+                <option value="eleven_multilingual_sts_v2" selected>Multilingual STS v2 (多语言推荐)</option>
+                <option value="eleven_english_sts_v2">English STS v2 (英语专用)</option>
+              </select>
+            </div>
+          </div>
+          <div class="tool-options-row">
+            <label class="tool-check-label"><input type="checkbox" id="stsRemoveNoise" checked> 🧹 转换前自动去除原音频背景噪音</label>
+            <label class="tool-check-label"><input type="checkbox" id="stsAutoDownload" checked> 💾 生成后自动保存到下载目录</label>
+          </div>
+          <div class="tool-actions-row">
+            <button type="button" id="stsGenerateBtn" class="btn-primary tool-submit-btn">🎭 开始语音变声</button>
+          </div>
+        </div>
+
+        <!-- 4. 人声提取 / 降噪 (Audio Isolation) -->
+        <div class="tool-pane hidden" data-pane="isolation">
+          <div class="tool-field">
+            <label for="isoAudioFile">上传需要降噪或提取干声的音频 / 视频文件</label>
+            <input type="file" id="isoAudioFile" accept="audio/*,video/*" class="tool-file-input">
+            <div class="tool-hint">💡 自动剔除背景音乐、电流声、环境杂音，提取清晰纯净的人声干音。</div>
+          </div>
+          <div class="tool-options-row">
+            <label class="tool-check-label"><input type="checkbox" id="isoAutoDownload" checked> 💾 提取后自动保存到下载目录</label>
+          </div>
+          <div class="tool-actions-row">
+            <button type="button" id="isoGenerateBtn" class="btn-primary tool-submit-btn">🧹 提取纯净人声</button>
+          </div>
+        </div>
+
+        <!-- 5. 语音转文字 (Speech-to-Text Scribe) -->
+        <div class="tool-pane hidden" data-pane="stt">
+          <div class="tool-field">
+            <label for="sttAudioFile">上传需要识别字幕/文案的音频或视频文件</label>
+            <input type="file" id="sttAudioFile" accept="audio/*,video/*" class="tool-file-input">
+          </div>
+          <div class="tool-grid-2">
+            <div class="tool-field">
+              <label for="sttModel">识别模型 (Scribe)</label>
+              <select id="sttModel">
+                <option value="scribe_v1" selected>Scribe v1 (99种语言高精度识别)</option>
+                <option value="scribe_v2">Scribe v2 (新一代极速模型)</option>
+              </select>
+            </div>
+            <div class="tool-field">
+              <label>附加识别选项</label>
+              <div class="tool-options-row" style="margin-top:6px;">
+                <label class="tool-check-label"><input type="checkbox" id="sttTagEvents" checked> 标注笑声/掌声</label>
+                <label class="tool-check-label"><input type="checkbox" id="sttDiarize"> 区分说话人</label>
+              </div>
+            </div>
+          </div>
+          <div class="tool-actions-row">
+            <button type="button" id="sttGenerateBtn" class="btn-primary tool-submit-btn">📝 开始语音转文字</button>
+          </div>
+          <div class="tool-field" style="margin-top:10px;">
+            <div class="tool-inline-between">
+              <label for="sttOutputText">识别结果</label>
+              <div class="tool-mini-btns">
+                <button type="button" id="sttCopyBtn" class="btn-outlined">📋 复制文本</button>
+                <button type="button" id="sttDownloadTxtBtn" class="btn-outlined">💾 导出 TXT</button>
+                <button type="button" id="sttSendToQueueBtn" class="btn-outlined" title="按段落切分并导入到主界面文案卡片列表">📥 导入配音列表</button>
+              </div>
+            </div>
+            <textarea id="sttOutputText" rows="4" placeholder="识别后的文字将显示在这里..."></textarea>
+          </div>
+        </div>
+
+        <!-- 公共状态与音频试听/历史区 -->
+        <div id="otherToolsStatus" class="other-tools-status" role="status" aria-live="polite">就绪：支持 AI 音效、音乐、变声、人声提取与语音转文字</div>
+        <div id="otherToolsAudioPanel" class="other-tools-audio-panel hidden">
+          <div class="audio-panel-header">
+            <span id="otherToolsAudioMeta" class="audio-panel-meta">最新生成音频</span>
+            <button type="button" id="otherToolsDownloadBtn" class="btn-outlined">💾 下载此音频</button>
+          </div>
+          <audio id="otherToolsAudioPlayer" controls preload="metadata"></audio>
+        </div>
+        <div id="otherToolsHistoryWrap" class="other-tools-history hidden">
+          <div class="history-title">🕘 本次会话生成记录</div>
+          <div id="otherToolsHistoryList" class="history-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🧹 声音清理与重名去重弹窗 -->
+  <div id="voiceCleanupModal" class="modal-overlay hidden">
+    <div class="modal-panel voice-cleanup-panel">
+      <div class="modal-header other-tools-header">
+        <div class="other-tools-title-wrap">
+          <h3>🧹 声音清理与重名去重</h3>
+          <span class="other-tools-sub">自动识别同名重复声音（每组保留 1 个）· 支持勾选删除复制错的多余声音</span>
+        </div>
+        <button type="button" id="closeVoiceCleanupBtn" class="close-icon" aria-label="关闭">×</button>
+      </div>
+      <div class="other-tools-body voice-cleanup-body">
+        <div id="voiceCleanupSummary" class="voice-cleanup-summary">正在统计声音列表...</div>
+        <div class="voice-cleanup-toolbar">
+          <input type="search" id="voiceCleanupSearch" class="voice-cleanup-search" placeholder="🔍 搜索声音名称或 Voice ID...">
+          <button type="button" id="selectDuplicateVoicesBtn" class="btn-outlined" title="自动勾选所有同名重复的多余副本，每组保留第 1 个">🎯 仅勾选重名多余项</button>
+          <button type="button" id="clearVoiceSelectionBtn" class="btn-ghost" title="取消当前所有勾选">取消全选</button>
+          <button type="button" id="restoreHiddenVoicesBtn" class="btn-ghost hidden" title="恢复此前在本地隐藏的声音">♻️ 恢复已隐藏</button>
+        </div>
+        <div class="voice-cleanup-options">
+          <label class="tool-check-label">
+            <input type="checkbox" id="dedupeVoiceSelectToggle" checked>
+            ✨ 下拉框自动隐藏同名重复声音（同名声音在下拉菜单仅显示 1 个）
+          </label>
+        </div>
+        <div id="voiceCleanupList" class="voice-cleanup-list"></div>
+        <div id="voiceCleanupStatus" class="other-tools-status" role="status" aria-live="polite">提示：已默认为您勾选同名多余副本（每组保留第 1 个），也可手动勾选其他复制错的声音一并清理。</div>
+        <div class="voice-cleanup-footer">
+          <button type="button" id="cancelVoiceCleanupBtn" class="btn-ghost">关闭</button>
+          <button type="button" id="confirmDeleteVoicesBtn" class="btn-primary">🧹 一键清理已勾选声音 (0)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
+

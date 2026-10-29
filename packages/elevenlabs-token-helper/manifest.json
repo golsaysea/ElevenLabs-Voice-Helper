@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Eleven V3 Batch Pro",
+  "version": "3.3.0",
+  "description": "基于网页登录 Token 授权的 ElevenLabs 批量生成工坊",
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "action": {
+    "default_icon": "icon.png"
+  },
+  "permissions": [
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://elevenlabs.io/*",
+    "https://*.elevenlabs.io/*",
+    "https://api.us.elevenlabs.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://elevenlabs.io/*", "https://*.elevenlabs.io/*"],
+      "js": ["extID.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["injectFetch.js"],
+      "matches": ["https://elevenlabs.io/*", "https://*.elevenlabs.io/*"]
+    }
+  ],
+  "externally_connectable": {
+    "matches": ["https://elevenlabs.io/*", "https://*.elevenlabs.io/*"]
+  }
+}

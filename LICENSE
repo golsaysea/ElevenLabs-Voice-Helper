@@ -1,0 +1,19 @@
+SPDX-License-Identifier: GPL-3.0-only
+
+This project is licensed under the GNU General Public License version 3.0 only.
+
+You should have received a copy of the GNU General Public License along with
+this project. If not, see:
+
+https://www.gnu.org/licenses/gpl-3.0-standalone.html
+
+Why GPL-3.0-only?
+
+This repository includes a packaged Python audio tool that directly depends on
+Spotify's `pedalboard` library. `pedalboard` is licensed under the GNU General
+Public License v3. To keep the current distribution set compatible for public
+GitHub release, the repository is published under GPL-3.0-only.
+
+If the `pedalboard`-based tool is removed or replaced with a permissively
+licensed alternative, the repository owner may re-evaluate using a more
+permissive project license.
