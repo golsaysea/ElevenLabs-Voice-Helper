@@ -89,9 +89,9 @@
       <div class="divider"></div>
 
       <div class="options-area">
-        <div class="toggle-row" style="margin-bottom: 10px;">
+        <div class="toggle-row hidden" style="margin-bottom: 10px;">
           <label for="autoSplit3Min" title="识别预计时长超过 3 分钟的文案，按段落/句末/转折词智能拆分为 2 份" style="font-weight:bold; cursor:pointer; font-size:13px;">✂️ 超3分钟自动分2段</label>
-          <input type="checkbox" id="autoSplit3Min" checked>
+          <input type="checkbox" id="autoSplit3Min">
         </div>
         <div class="toggle-row">
           <label for="autoDelete" style="font-weight:bold; cursor:pointer; font-size:13px;">✅ 生成完自动删除对应文案</label>
@@ -108,7 +108,8 @@
         <div class="toolbar-btns">
           <button id="otherToolsBtn" class="btn-outlined" title="打开 ElevenLabs 其他工具 (生成音效、音乐、语音变声、人声提取降噪、语音转文字)">🧰 其他工具</button>
           <button id="clearAllBtn" class="btn-ghost">一键清空</button>
-          <button id="splitLongBtn" class="btn-outlined hidden" title="将列表中所有超过 3 分钟的文案按合适语义边界各拆分为 2 份">✂️ 超3分拆2段</button>
+          <button id="splitLongBtn" class="btn-outlined btn-split-alert hidden" title="检测到超过 3 分钟的文案，点击可按语义边界智能拆分为 2 份">🔴 超3分钟·可拆分</button>
+          <button id="copySheetBtn" class="btn-outlined" title="一键复制所有分段文案（可直接 Ctrl+V 粘贴到谷歌表格/Excel，每段占一行；若刚生成完已自动删除，则复制上一批生成的文案）">📋 复制到表格</button>
           <button id="addCardBtn" class="btn-outlined">+ 新增一段</button>
         </div>
       </div>

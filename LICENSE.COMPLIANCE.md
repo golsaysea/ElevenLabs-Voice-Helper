@@ -1,6 +1,6 @@
 # 协议合规参考报告 / License Compliance Reference Report
 
-生成日期：2026-10-29  
+生成日期：2026-11-06  
 审计基准：开源分发 / GitHub 公开仓库  
 项目许可证：GPL-3.0-only
 

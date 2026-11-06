@@ -35,6 +35,10 @@ let appState = {
   hiddenVoiceIds: [],
   dedupeVoiceSelect: true,
   selectedVoiceCleanupIds: new Set(),
+  lastBatchSheetRows: [],
+  lastCopiedSheetText: '',
+  lastBatchSheetCsv: '',
+  lastBatchSheetCsvPath: '',
   generationSettings: { ...DEFAULT_GENERATION_SETTINGS }
 };
 
@@ -43,6 +47,7 @@ const DOM = {
   addCardBtn: document.getElementById('addCardBtn'),
   clearAllBtn: document.getElementById('clearAllBtn'),
   splitLongBtn: document.getElementById('splitLongBtn'),
+  copySheetBtn: document.getElementById('copySheetBtn'),
   generateBtn: document.getElementById('generateBtn'),
   stopBtn: document.getElementById('stopBtn'),
   totalCharsDisplay: document.getElementById('totalCharsDisplay'),
@@ -129,8 +134,8 @@ const DOM = {
   sttSendToQueueBtn: document.getElementById('sttSendToQueueBtn')
 };
 
-if (DOM.autoSplit3Min && DOM.autoSplit3Min.checked === undefined) {
-  DOM.autoSplit3Min.checked = true;
+if (DOM.autoSplit3Min) {
+  DOM.autoSplit3Min.checked = false;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -143,11 +148,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function initTheme() {
-  chrome.storage.local.get(['theme', 'autoSplit3Min'], (res) => {
+  chrome.storage.local.get(['theme'], (res) => {
     if (res && res.theme === 'light') document.documentElement.classList.add('light-theme');
-    if (DOM.autoSplit3Min && res && res.autoSplit3Min !== undefined) {
-      DOM.autoSplit3Min.checked = Boolean(res.autoSplit3Min);
-    }
+    if (DOM.autoSplit3Min) DOM.autoSplit3Min.checked = false;
   });
 }
 
@@ -169,6 +172,12 @@ function initEventListeners() {
       if (appState.isGenerating) return;
       const count = splitAllOverThreeMinutesCards();
       if (count > 0) showStatus(`✂️ 已将 ${count} 段超 3 分钟文案各智能拆分为 2 份`);
+    });
+  }
+
+  if (DOM.copySheetBtn) {
+    DOM.copySheetBtn.addEventListener('click', () => {
+      copyTextsToSheet();
     });
   }
 
@@ -951,19 +960,24 @@ function splitOverThreeMinutes(text, options = {}) {
 
 function expandOverThreeMinutes(texts, options = {}) {
   const expanded = [];
+  const splitNotes = [];
   let splitCount = 0;
+  let origIdx = 0;
   for (const item of Array.isArray(texts) ? texts : []) {
     const text = String(item || '').trim();
     if (!text) continue;
+    origIdx++;
     const result = splitOverThreeMinutes(text, options);
     if (result.split && result.parts.length === 2) {
       expanded.push(result.parts[0], result.parts[1]);
+      splitNotes.push(`✂️ 超3分拆分(原#${origIdx}-1/2)`, `✂️ 超3分拆分(原#${origIdx}-2/2)`);
       splitCount++;
     } else {
       expanded.push(text);
+      splitNotes.push(`原#${origIdx}`);
     }
   }
-  return { texts: expanded, splitCount };
+  return { texts: expanded, splitNotes, splitCount };
 }
 
 function buildPreviewSignature(firstSentence) {
@@ -1155,10 +1169,13 @@ function splitCardIntoTwo(card, persist = true) {
   const res = splitOverThreeMinutes(raw);
   if (!res.split || res.parts.length < 2) return false;
   if (appState.activePreview && appState.activePreview.card === card) stopActivePreview();
+  const prevNote = card.splitNote && /^原#\d+$/.test(card.splitNote) ? card.splitNote + '-' : '';
   card.textarea.value = res.parts[0];
+  card.splitNote = `✂️ 超3分拆分(${prevNote}1/2)`;
   updateCardMeta(card);
 
   const secondCard = addEmptyCard(res.parts[1]);
+  secondCard.splitNote = `✂️ 超3分拆分(${prevNote}2/2)`;
   insertCardAfter(card, secondCard);
   if (persist) {
     updateStats();
@@ -1181,29 +1198,148 @@ function splitAllOverThreeMinutesCards() {
   return splitCount;
 }
 
+async function writeTextToClipboard(text) {
+  appState.lastCopiedSheetText = text;
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {}
+  }
+  if (typeof document !== 'undefined' && document.body && typeof document.body.appendChild === 'function') {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      if (typeof ta.select === 'function') ta.select();
+      if (typeof document.execCommand === 'function') document.execCommand('copy');
+      if (typeof ta.remove === 'function') ta.remove();
+    } catch (_) {}
+  }
+  return true;
+}
+
+function buildBatchSheetCsv(records) {
+  const escapeCsv = (val) => {
+    const str = String(val ?? '').replace(/\r\n?/g, '\n');
+    return '"' + str.replace(/"/g, '""') + '"';
+  };
+  const header = '序号,音频文件名,分段说明,字数,预计时长,状态,完整文案';
+  const lines = records.map(r => [
+    escapeCsv(r.indexLabel),
+    escapeCsv(r.audioFilename),
+    escapeCsv(r.splitNote || '原段'),
+    escapeCsv(r.chars),
+    escapeCsv(r.duration),
+    escapeCsv(r.status || '已完成'),
+    escapeCsv(r.text)
+  ].join(','));
+  return '\uFEFF' + [header, ...lines].join('\r\n') + '\r\n';
+}
+
+async function saveBatchSheetCsv(records, subFolder) {
+  if (!Array.isArray(records) || !records.length) return;
+  const csvContent = buildBatchSheetCsv(records);
+  const csvPath = `ElevenLabs_Pro/${subFolder || '批量导出'}/000_文案对照表.csv`;
+  appState.lastBatchSheetCsv = csvContent;
+  appState.lastBatchSheetCsvPath = csvPath;
+  let url = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent);
+  let createdObjUrl = false;
+  if (typeof Blob === 'function' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    try {
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      url = URL.createObjectURL(blob);
+      createdObjUrl = true;
+    } catch (_) {}
+  }
+  try {
+    await chrome.downloads.download({ url, filename: csvPath, saveAs: false, conflictAction: 'uniquify' });
+  } catch (_) {
+  } finally {
+    if (createdObjUrl && typeof setTimeout === 'function') {
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 2000);
+    } else if (createdObjUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    }
+  }
+}
+
+async function copyTextsToSheet() {
+  const textareas = Array.from(DOM.listContainer.querySelectorAll('textarea'));
+  let rows = textareas.map(ta => ta.value.trim()).filter(Boolean);
+  let fromBackup = false;
+  if (rows.length === 0 && Array.isArray(appState.lastBatchSheetRows) && appState.lastBatchSheetRows.length > 0) {
+    rows = appState.lastBatchSheetRows.map(r => String(r && r.text || '').trim()).filter(Boolean);
+    fromBackup = true;
+  }
+  if (rows.length === 0) {
+    showStatus('⚠️ 当前没有可复制的文案');
+    return '';
+  }
+  const cleanRows = rows.map(t => t.replace(/[\r\n\t]+/g, ' ').trim());
+  const sheetText = cleanRows.join('\n');
+  await writeTextToClipboard(sheetText);
+  if (DOM.copySheetBtn) {
+    const prev = DOM.copySheetBtn.textContent || '📋 复制到表格';
+    DOM.copySheetBtn.textContent = `✅ 已复制 (${cleanRows.length}段)`;
+    if (typeof setTimeout === 'function') {
+      setTimeout(() => { if (DOM.copySheetBtn) DOM.copySheetBtn.textContent = prev; }, 1800);
+    }
+  }
+  showStatus(fromBackup
+    ? `📋 已从刚完成的任务恢复并复制 ${cleanRows.length} 段文案（可直接 Ctrl+V 粘贴到谷歌表格/Excel）`
+    : `📋 已复制 ${cleanRows.length} 段文案到剪贴板（可直接 Ctrl+V 粘贴到谷歌表格/Excel，每段占一行）`);
+  return sheetText;
+}
+
 function handleGlobalPaste(e) {
-  const pasteText = (e.clipboardData || window.clipboardData).getData('text');
-  if (!pasteText) return;
-  const autoSplit = !DOM.autoSplit3Min || DOM.autoSplit3Min.checked !== false;
-  const isMultiLine = pasteText.includes('\t') || pasteText.includes('\n');
-  const singleOver3Min = !isMultiLine && autoSplit && splitOverThreeMinutes(pasteText).split;
-  if (isMultiLine || singleOver3Min) {
+  const clipboardData = e.clipboardData || window.clipboardData;
+  if (!clipboardData) return;
+  const html = typeof clipboardData.getData === 'function' ? clipboardData.getData('text/html') : '';
+  const pasteText = typeof clipboardData.getData === 'function' ? clipboardData.getData('text') : '';
+  if (!pasteText && !html) return;
+
+  let htmlSegments = [];
+  if (html && typeof DOMParser === 'function' && /<td[\s>]/i.test(html)) {
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const tds = doc.querySelectorAll('td');
+      if (tds && tds.length > 0) {
+        tds.forEach(td => {
+          let rawHtml = td.innerHTML || '';
+          rawHtml = rawHtml.replace(/<br\s*\/?>/gi, ' ').replace(/<\/p>/gi, ' ').replace(/<\/div>/gi, ' ').replace(/<\/tr>/gi, ' ');
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = rawHtml;
+          const txt = String(tempDiv.textContent || tempDiv.innerText || '').replace(/\s+/g, ' ').trim();
+          if (txt) htmlSegments.push(txt);
+        });
+      }
+    } catch (_) {}
+  }
+
+  const isMultiLine = htmlSegments.length > 1 || pasteText.includes('\t') || pasteText.includes('\n');
+  if (htmlSegments.length > 0 || isMultiLine) {
     e.preventDefault();
-    const rawSegments = isMultiLine
-      ? pasteText.split(/\r?\n|\t/).map(s => s.trim()).filter(s => s.length > 0)
-      : [pasteText.trim()];
+    const rawSegments = htmlSegments.length > 0
+      ? htmlSegments
+      : (isMultiLine
+        ? pasteText.split(/\r?\n|\t/).map(s => s.trim()).filter(s => s.length > 0)
+        : [pasteText.trim()]);
     if (rawSegments.length === 0) return;
-    const expanded = autoSplit ? expandOverThreeMinutes(rawSegments) : { texts: rawSegments, splitCount: 0 };
-    const segments = expanded.texts;
 
     const textareas = DOM.listContainer.querySelectorAll('textarea');
     if (textareas.length === 1 && textareas[0].value.trim() === '') DOM.listContainer.replaceChildren();
 
-    segments.forEach(text => addEmptyCard(text));
+    rawSegments.forEach((text) => {
+      addEmptyCard(text);
+    });
     updateStats();
-    showStatus(expanded.splitCount > 0
-      ? `✂️ 成功导入 ${segments.length} 条文案（自动将 ${expanded.splitCount} 段超 3 分钟文案各分为 2 份）`
-      : `✅ 成功导入 ${segments.length} 条文案`);
+    const overLimitCount = expandOverThreeMinutes(rawSegments).splitCount;
+    showStatus(overLimitCount > 0
+      ? `⚠️ 成功导入 ${rawSegments.length} 条文案（含 ${overLimitCount} 段超 3 分钟，未自动拆分，如需拆分请点击上方红色按钮）`
+      : `✅ 成功导入 ${rawSegments.length} 条文案`);
   }
 }
 
@@ -1241,7 +1377,7 @@ function addEmptyCard(text = '') {
   const splitBtn = document.createElement('button');
   splitBtn.type = 'button';
   splitBtn.className = 'card-tool-btn task-split hidden';
-  splitBtn.textContent = '✂️ 分2段';
+  splitBtn.textContent = '✂️ 超3分·可拆分';
   splitBtn.addEventListener('click', () => splitCardIntoTwo(card, true));
 
   const previewBtn = document.createElement('button');
@@ -1299,7 +1435,7 @@ function updateStats() {
   if (DOM.splitLongBtn) {
     DOM.splitLongBtn.classList.toggle('hidden', overLimitCount === 0);
     DOM.splitLongBtn.disabled = appState.isGenerating || appState.previewRunning || overLimitCount === 0;
-    DOM.splitLongBtn.textContent = overLimitCount > 0 ? `✂️ 超3分拆2段 (${overLimitCount})` : '✂️ 超3分拆2段';
+    DOM.splitLongBtn.textContent = overLimitCount > 0 ? `🔴 超3分钟·可拆分 (${overLimitCount}段)` : '🔴 超3分钟·可拆分';
   }
 
   DOM.totalCharsDisplay.textContent = `总字数: ${totalChars}`;
@@ -1322,6 +1458,10 @@ function updateStats() {
 }
 
 async function loadDrafts() {
+  try {
+    const cachedRows = typeof localStorage !== 'undefined' && localStorage.getItem('elevenlabs_last_batch_rows');
+    if (cachedRows) appState.lastBatchSheetRows = JSON.parse(cachedRows);
+  } catch (_) {}
   const revision = appState.draftsRevision;
   const res = await chrome.storage.local.get('savedDrafts');
   // 清空或编辑发生后，迟到的读取结果不能把旧草稿恢复回来。
@@ -1469,12 +1609,11 @@ async function startBatchGeneration() {
   const auth = getActiveAuth();
   if (!auth) return alert('未检测到可用 Token，请先打开 ElevenLabs 网页并触发一次请求。');
 
-  if (!DOM.autoSplit3Min || DOM.autoSplit3Min.checked !== false) {
-    splitAllOverThreeMinutesCards();
-  }
-
   const textareas = Array.from(DOM.listContainer.querySelectorAll('textarea'));
-  const validCards = textareas.map(ta => ta.value.trim()).filter(t => t.length > 0);
+  const validEntries = textareas
+    .map(ta => ({ ta, card: ta.parentElement, text: ta.value.trim() }))
+    .filter(item => item.text.length > 0);
+  const validCards = validEntries.map(item => item.text);
   if (validCards.length === 0) return showStatus('⚠️ 没有需要生成的文案');
 
   const voiceId = DOM.voiceSelect.value;
@@ -1500,6 +1639,23 @@ async function startBatchGeneration() {
     modelId,
     voiceId
   };
+
+  const batchSheetRecords = validEntries.map((entry, idx) => {
+    const est = estimateDuration(entry.text);
+    return {
+      index: idx + 1,
+      indexLabel: String(idx + 1).padStart(3, '0'),
+      audioFilename: buildAudioFilename(entry.text, idx + 1),
+      splitNote: (entry.card && entry.card.splitNote) ? entry.card.splitNote : '原段',
+      chars: entry.text.length,
+      duration: est.formatted,
+      status: '待生成',
+      text: entry.text,
+      downloaded: false
+    };
+  });
+  appState.lastBatchSheetRows = batchSheetRecords;
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem('elevenlabs_last_batch_rows', JSON.stringify(batchSheetRecords)); } catch (_) {}
 
   for (let i = 0; i < validCards.length; i++) {
     if (!appState.isGenerating) {
@@ -1527,6 +1683,10 @@ async function startBatchGeneration() {
       const filename = `ElevenLabs_Pro/${subFolder}/${buildAudioFilename(originalText, i + 1)}`;
       await downloadAudio(blob, filename, subFolder, controller.signal);
       controller.signal.throwIfAborted();
+      if (batchSheetRecords[i]) {
+        batchSheetRecords[i].downloaded = true;
+        batchSheetRecords[i].status = '已完成';
+      }
 
       if (autoDelete) {
         const correspondingTextarea = textareas.find(ta => ta.isConnected && ta.value.trim() === originalText);
@@ -1550,6 +1710,7 @@ async function startBatchGeneration() {
         });
       }
     } catch (err) {
+      if (batchSheetRecords[i]) batchSheetRecords[i].status = '失败';
       if (!controller.signal.aborted) {
         const errorMsg = `❌ 第 ${i + 1} 段生成失败：${err.message}`;
         showStatus(errorMsg);
@@ -1560,7 +1721,12 @@ async function startBatchGeneration() {
     }
   }
 
-  if (appState.isGenerating) showStatus('🎉 批量任务完成！文件已保存在你的下载目录中。');
+  if (batchSheetRecords.some(r => r.downloaded)) {
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem('elevenlabs_last_batch_rows', JSON.stringify(batchSheetRecords)); } catch (_) {}
+    await saveBatchSheetCsv(batchSheetRecords, subFolder);
+  }
+
+  if (appState.isGenerating) showStatus('🎉 批量任务完成！音频与 000_文案对照表.csv 已保存在你的下载目录中。');
   appState.isGenerating = false;
   appState.generationController = null;
   DOM.generateBtn.classList.remove('hidden');
@@ -2144,11 +2310,7 @@ function initOtherTools() {
     DOM.sttSendToQueueBtn.addEventListener('click', () => {
       const txt = DOM.sttOutputText ? DOM.sttOutputText.value.trim() : '';
       if (!txt) return setToolStatus('⚠️ 暂无可加入队列的识别文本', 'error');
-      let segs = txt.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
-      const autoSplit = !DOM.autoSplit3Min || DOM.autoSplit3Min.checked !== false;
-      if (autoSplit) {
-        segs = expandOverThreeMinutes(segs).texts;
-      }
+      const segs = txt.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
       const textareas = DOM.listContainer.querySelectorAll('textarea');
       if (textareas.length === 1 && textareas[0].value.trim() === '') {
         DOM.listContainer.replaceChildren();

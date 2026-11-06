@@ -1,6 +1,6 @@
 # 依赖协议与静态安全审计报告 / Dependency & License Audit Report
 
-审计日期：2026-10-29  
+审计日期：2026-11-06  
 仓库名称：`golsaysea/ElevenLabs-Voice-Helper`  
 发布版本：`v3.3.0`  
 审计指南：https://tpscsm-docs.pages.dev/license-audit/
