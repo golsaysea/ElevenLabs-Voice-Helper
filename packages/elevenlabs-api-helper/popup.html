@@ -210,6 +210,46 @@
           <button id="addCardBtn" class="btn-outlined">+ 新段落</button>
         </div>
       </div>
+
+      <!-- 🎭 批量开头标签与智能自动添加标签操作栏 (v6.8) -->
+      <div class="batch-tag-bar" id="batchTagBar">
+        <div class="batch-tag-row">
+          <span class="batch-tag-label" title="在所有文案最开头统一插入或更新风格/演唱/情绪指令标签">🏷️ 开头标签</span>
+          <select id="prefixTagPresetSelect" class="batch-tag-preset" title="选择常用开头风格/情绪标签预设（可自动填入右侧输入框）">
+            <option value="">✨ 常用开头标签预设...</option>
+            <option value="[Sing everything in a powerful, raspy, soulful female Gospel style with emotional vibrato and sustained notes. No speaking, singing only.]">🎤 福音灵魂女声纯享歌唱 (Gospel Singing Only)</option>
+            <option value="[Sing everything with a warm, emotional melodic voice and gentle vibrato. No speaking, singing only.]">🎵 温暖深情旋律纯歌唱 (Melodic Singing Only)</option>
+            <option value="[reverent, warm, slow, heartfelt prayer tone with gentle pauses]">🙏 虔诚温暖祈祷风 (Reverent Prayer)</option>
+            <option value="[passionate, uplifting, inspiring sermon tone with emotional conviction]">🔥 充满感召力布道/演讲 (Passionate Sermon)</option>
+            <option value="[whispers]">🤫 轻声耳语 ([whispers])</option>
+            <option value="[excited]">🤩 兴奋激动 ([excited])</option>
+            <option value="[emotional, sighs softly]">🥺 深情轻叹 ([emotional, sighs softly])</option>
+            <option value="[slows down, calm and steady]">🧘 放慢语速·沉稳平静 ([slows down, calm and steady])</option>
+          </select>
+          <input type="text" id="prefixTagInput" class="batch-tag-input" placeholder="输入或粘贴开头标签，如 [Sing everything in a powerful...]" title="输入要批量添加到所有文案最开头的标签（不带方括号会自动补齐 [ ]）">
+          <button type="button" id="prependTagAllBtn" class="btn-tag-action primary" title="将输入框中的标签一键批量添加到所有文案的最开头（已有相同标签不重复叠加）">➕ 批量加到开头</button>
+          <button type="button" id="removePrefixTagAllBtn" class="btn-tag-action" title="一键移除所有文案最开头的 [...] 标签">🧹 清除开头标签</button>
+          <label class="batch-tag-check" title="勾选后，每次粘贴或批量导入新文案时自动在每段开头加上此标签">
+            <input type="checkbox" id="autoPrependTagToggle">
+            <span>导入自动加</span>
+          </label>
+        </div>
+        <div class="batch-tag-row batch-autotag-row">
+          <span class="batch-tag-label" title="仿照 ElevenLabs 官方「自动添加标签 (Auto-add tags)」，根据文案语义与标点在句中智能注入表现力标签">🎭 自动加标签</span>
+          <select id="autoTagStyleSelect" class="batch-tag-style-select" title="选择自动添加标签的情绪/场景风格">
+            <option value="auto" selected>🤖 智能语义识别 (自动匹配祈祷/感叹/停顿/转折)</option>
+            <option value="prayer">🙏 虔诚祈祷 / 福音感召 (reverent / emotional / pauses)</option>
+            <option value="singing">🎤 深情歌唱 / 圣咏延长音 (singing / vibrato / sustained notes)</option>
+            <option value="story">📖 沉浸叙事 / 故事旁白 (warm / expressive / dramatic pauses)</option>
+            <option value="energetic">🔥 激情感染 / 演讲号召 (excited / passionate / emphasis)</option>
+            <option value="gentle">🌙 温柔治愈 / 深夜电台 (softly / whispers / sighs)</option>
+          </select>
+          <button type="button" id="autoAddTagsAllBtn" class="btn-autotag-magic" title="一键为所有文案智能分析语义并自动插入 ElevenLabs 表现力标签（如 [reverent]、[emotional]、[short pause] 等）">🎭 自动添加标签</button>
+          <button type="button" id="clearAllTagsBtn" class="btn-tag-action" title="清除所有文案中的全部 [...] 情绪与风格标签">🧹 清除全部标签</button>
+          <button type="button" id="undoTagBtn" class="btn-tag-action hidden" title="撤销上一次批量标签操作，恢复原本文案">↩️ 撤销标签操作</button>
+        </div>
+      </div>
+
       <div id="listContainer" class="cards-wrapper"></div>
       <div class="content-footer">
         <div class="stats-info">

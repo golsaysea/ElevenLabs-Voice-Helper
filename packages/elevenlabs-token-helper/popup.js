@@ -150,7 +150,16 @@ const DOM = {
   dismissUpdateBtn: document.getElementById('dismissUpdateBtn'),
   downloadUpdateBtn: document.getElementById('downloadUpdateBtn'),
   openGithubReleaseBtn: document.getElementById('openGithubReleaseBtn'),
-  autoCheckUpdate: document.getElementById('autoCheckUpdate')
+  autoCheckUpdate: document.getElementById('autoCheckUpdate'),
+  prefixTagPresetSelect: document.getElementById('prefixTagPresetSelect'),
+  prefixTagInput: document.getElementById('prefixTagInput'),
+  prependTagAllBtn: document.getElementById('prependTagAllBtn'),
+  removePrefixTagAllBtn: document.getElementById('removePrefixTagAllBtn'),
+  autoPrependTagToggle: document.getElementById('autoPrependTagToggle'),
+  autoTagStyleSelect: document.getElementById('autoTagStyleSelect'),
+  autoAddTagsAllBtn: document.getElementById('autoAddTagsAllBtn'),
+  clearAllTagsBtn: document.getElementById('clearAllTagsBtn'),
+  undoTagBtn: document.getElementById('undoTagBtn')
 };
 
 if (DOM.autoSplit3Min) {
@@ -161,6 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   initEventListeners();
   initAudioEffectsAndGithubUpdate();
+  initBatchTagControls();
   await loadGenerationSettings();
   await loadExportFolder();
   await loadDrafts();
@@ -721,12 +731,14 @@ const SPLIT_REASON_LABELS = {
 function extractFirstSentence(text) {
   const normalized = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
   if (!normalized) return '';
-  const firstLine = normalized.split('\n').map(line => line.trim()).find(Boolean) || '';
-  if (!firstLine) return '';
-  const tagPrefixMatch = firstLine.match(/^(?:\[[^\]\n]{1,40}\]\s*)+/);
-  const prefix = tagPrefixMatch ? tagPrefixMatch[0] : '';
-  const body = firstLine.slice(prefix.length).trim();
-  if (!body) return firstLine.slice(0, 120);
+  const leadingTagsMatch = normalized.match(/^(?:\[[^\]\n]{1,300}\]\s*)+/);
+  const prefix = leadingTagsMatch ? leadingTagsMatch[0].replace(/\s*\n\s*/g, ' ').trim() + ' ' : '';
+  const restText = leadingTagsMatch ? normalized.slice(leadingTagsMatch[0].length).trim() : normalized;
+  if (!restText) return prefix.trim().slice(0, 300);
+
+  const firstLine = restText.split('\n').map(line => line.trim()).find(Boolean) || '';
+  if (!firstLine) return prefix.trim();
+  const body = firstLine;
 
   const sentenceMatch = body.match(/^[\s\S]*?(?:[。！？!?；;]+|\.{3,}|…+|\.(?!\d)(?=\s|$|["'”’）)\]}]))["'”’）)\]}]*\s*/);
   if (sentenceMatch && sentenceMatch[0].trim()) {
@@ -764,8 +776,8 @@ function estimateDuration(text, options = {}) {
   const speed = Number.isFinite(speedInput) && speedInput > 0 ? Math.max(0.5, Math.min(2, speedInput)) : 1;
 
   let nonVerbalPause = 0;
-  const withoutTags = normalized.replace(/\[([^\]\n]{1,40})\]/g, (_, tag) => {
-    if (/pause|break|silence|sigh|breath|gasp|laugh|chuckle|sob|cry|yawn|cough|throat|停顿|叹气|笑|哭|呼吸/i.test(tag)) {
+  const withoutTags = normalized.replace(/\[([^\]\n]{1,300})\]/g, (_, tag) => {
+    if (tag.length <= 50 && /pause|break|silence|sigh|breath|gasp|laugh|chuckle|sob|cry|yawn|cough|throat|停顿|叹气|笑|哭|呼吸/i.test(tag)) {
       nonVerbalPause += 0.55;
     }
     return ' ';
@@ -1343,11 +1355,11 @@ function handleGlobalPaste(e) {
   const isMultiLine = htmlSegments.length > 1 || pasteText.includes('\t') || pasteText.includes('\n');
   if (htmlSegments.length > 0 || isMultiLine) {
     e.preventDefault();
-    const rawSegments = htmlSegments.length > 0
+    const rawSegments = maybeAutoPrependTagToSegments(htmlSegments.length > 0
       ? htmlSegments
       : (isMultiLine
         ? pasteText.split(/\r?\n|\t/).map(s => s.trim()).filter(s => s.length > 0)
-        : [pasteText.trim()]);
+        : [pasteText.trim()]));
     if (rawSegments.length === 0) return;
 
     const textareas = DOM.listContainer.querySelectorAll('textarea');
@@ -1401,6 +1413,13 @@ function addEmptyCard(text = '') {
   splitBtn.textContent = '✂️ 超3分·可拆分';
   splitBtn.addEventListener('click', () => splitCardIntoTwo(card, true));
 
+  const autoTagBtn = document.createElement('button');
+  autoTagBtn.type = 'button';
+  autoTagBtn.className = 'card-tool-btn task-autotag';
+  autoTagBtn.textContent = '🎭 自动加标签';
+  autoTagBtn.title = '智能分析当前段落语义并自动插入 ElevenLabs 表现力标签（如 [reverent]、[emotional]、[short pause] 等）';
+  autoTagBtn.addEventListener('click', () => autoTagSingleCard(card));
+
   const previewBtn = document.createElement('button');
   previewBtn.type = 'button';
   previewBtn.className = 'card-tool-btn task-preview';
@@ -1410,6 +1429,7 @@ function addEmptyCard(text = '') {
   metaRight.appendChild(charBadge);
   metaRight.appendChild(durBadge);
   metaRight.appendChild(splitBtn);
+  metaRight.appendChild(autoTagBtn);
   metaRight.appendChild(previewBtn);
   metaBar.appendChild(metaLeft);
   metaBar.appendChild(metaRight);
@@ -1419,6 +1439,7 @@ function addEmptyCard(text = '') {
   card.charBadge = charBadge;
   card.durBadge = durBadge;
   card.splitBtn = splitBtn;
+  card.autoTagBtn = autoTagBtn;
   card.previewBtn = previewBtn;
 
   card.appendChild(textarea);
@@ -1574,7 +1595,7 @@ async function requestTtsStreamWithFallback({ auth, voiceId, text, modelId, voic
     if (plainRes.ok) return plainRes;
   }
 
-  const hasEmotionTag = /\[\s*[A-Za-z\u4e00-\u9fa5][^\]]{0,35}\]/.test(String(text || ''));
+  const hasEmotionTag = /\[\s*[A-Za-z\u4e00-\u9fa5][^\]]{0,300}\]/.test(String(text || ''));
   const baseChain = hasEmotionTag
     ? ['eleven_v3', 'eleven_multilingual_v2', 'eleven_flash_v2_5', 'eleven_turbo_v2_5']
     : ['eleven_multilingual_v2', 'eleven_flash_v2_5', 'eleven_turbo_v2_5', 'eleven_v3'];
@@ -1623,8 +1644,9 @@ async function prepareGenerationItem(text, index, context) {
 }
 
 function buildAudioFilename(text, index) {
-  // 取第一行中的第一句话；没有句末标点时使用整行。
-  const firstLine = text.trim().split(/\r?\n/)[0];
+  // 剥离最开头的 [...] 风格/情绪标签后，取第一行中的第一句话；没有句末标点时使用整行。
+  const cleanedText = String(text || '').replace(/^(?:\s*\[[^\]\n]{1,300}\]\s*)+/, '').replace(/\[[^\]\n]{1,80}\]\s*/g, '').trim() || String(text || '').trim();
+  const firstLine = cleanedText.split(/\r?\n/)[0];
   const firstSentence = firstLine.match(/^.*?(?:[。！？!?]+|\.(?=\s|$)|$)/u)?.[0] || firstLine;
   const safeSentence = Array.from(firstSentence
     .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '_')
@@ -2342,7 +2364,7 @@ function initOtherTools() {
     DOM.sttSendToQueueBtn.addEventListener('click', () => {
       const txt = DOM.sttOutputText ? DOM.sttOutputText.value.trim() : '';
       if (!txt) return setToolStatus('⚠️ 暂无可加入队列的识别文本', 'error');
-      const segs = txt.split(/\r?\n+/).map(s => s.trim()).filter(Boolean);
+      const segs = maybeAutoPrependTagToSegments(txt.split(/\r?\n+/).map(s => s.trim()).filter(Boolean));
       const textareas = DOM.listContainer.querySelectorAll('textarea');
       if (textareas.length === 1 && textareas[0].value.trim() === '') {
         DOM.listContainer.replaceChildren();
@@ -2654,9 +2676,9 @@ function initVoiceCleanup() {
 // 🎛️ ElevenLabs 音频效果 (Audio Effects) 与 🔄 GitHub 自动检查更新
 // ==========================================
 const HELPER_GITHUB_REPO = 'golsaysea/ElevenLabs-Voice-Helper';
-const HELPER_EXT_VERSION = '3.4.0';
+const HELPER_EXT_VERSION = '3.5.0';
 const HELPER_MANIFEST_PATH = 'packages/elevenlabs-token-helper/manifest.json';
-const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.4.0.zip';
+const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.0.zip';
 
 function buildAudioEffectsPayload() {
   const envId = DOM.audioEffectEnv && DOM.audioEffectEnv.value ? String(DOM.audioEffectEnv.value).trim() : '';
@@ -2974,6 +2996,387 @@ function initAudioEffectsAndGithubUpdate() {
       } else {
         setTimeout(() => checkForGithubUpdate(false), 1200);
       }
+    }
+  });
+}
+
+// ==========================================
+// 🏷️ 批量开头标签与 🎭 智能自动添加标签 (Auto-add Tags v3.5)
+// ==========================================
+let tagUndoSnapshot = null;
+
+function normalizeBracketTag(rawTag) {
+  const trimmed = String(rawTag || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    return trimmed;
+  }
+  const inner = trimmed.replace(/^\[+|\]+$/g, '').trim();
+  return inner ? `[${inner}]` : '';
+}
+
+function savePrefixTagSettings() {
+  chrome.storage.local.set({
+    batchTagSettings: {
+      prefixTag: DOM.prefixTagInput ? DOM.prefixTagInput.value : '',
+      presetValue: DOM.prefixTagPresetSelect ? DOM.prefixTagPresetSelect.value : '',
+      autoPrepend: Boolean(DOM.autoPrependTagToggle && DOM.autoPrependTagToggle.checked),
+      autoTagStyle: DOM.autoTagStyleSelect ? DOM.autoTagStyleSelect.value : 'auto'
+    }
+  });
+}
+
+function saveTagUndoSnapshot() {
+  const cards = Array.from(DOM.listContainer.children || []);
+  tagUndoSnapshot = cards.map(c => (c.textarea ? c.textarea.value : ''));
+  if (DOM.undoTagBtn) DOM.undoTagBtn.classList.remove('hidden');
+}
+
+function restoreTagUndoSnapshot() {
+  if (!Array.isArray(tagUndoSnapshot)) return;
+  const cards = Array.from(DOM.listContainer.children || []);
+  if (cards.length === tagUndoSnapshot.length) {
+    cards.forEach((c, idx) => {
+      if (c.textarea) {
+        c.textarea.value = tagUndoSnapshot[idx];
+        c.previewCache = null;
+      }
+    });
+  } else {
+    DOM.listContainer.replaceChildren();
+    tagUndoSnapshot.forEach(txt => addEmptyCard(txt));
+  }
+  tagUndoSnapshot = null;
+  if (DOM.undoTagBtn) DOM.undoTagBtn.classList.add('hidden');
+  updateStats();
+  showStatus('↩️ 已撤销上一次标签操作，恢复原本文案');
+}
+
+function prependTagToText(rawText, normalizedTag) {
+  const text = String(rawText || '').trim();
+  if (!text || !normalizedTag) return text;
+  const leadingMatch = text.match(/^(\[[^\]]{1,300}\])\s*([\s\S]*)$/);
+  if (leadingMatch) {
+    const existingFirstTag = leadingMatch[1].trim();
+    const restBody = leadingMatch[2].trim();
+    if (existingFirstTag.toLowerCase() === normalizedTag.toLowerCase()) {
+      return `${normalizedTag}\n${restBody}`.trim();
+    }
+    if (existingFirstTag.length >= 28 && normalizedTag.length >= 28) {
+      return `${normalizedTag}\n${restBody}`.trim();
+    }
+  }
+  return `${normalizedTag}\n${text}`;
+}
+
+function maybeAutoPrependTagToSegments(segs) {
+  if (!Array.isArray(segs) || segs.length === 0) return segs;
+  if (!DOM.autoPrependTagToggle || !DOM.autoPrependTagToggle.checked) return segs;
+  const tag = normalizeBracketTag(DOM.prefixTagInput ? DOM.prefixTagInput.value : '');
+  if (!tag) return segs;
+  return segs.map(s => prependTagToText(s, tag));
+}
+
+function applyPrefixTagToAllCards() {
+  const rawInput = (DOM.prefixTagInput && DOM.prefixTagInput.value.trim()) || (DOM.prefixTagPresetSelect && DOM.prefixTagPresetSelect.value.trim()) || '';
+  const normalizedTag = normalizeBracketTag(rawInput);
+  if (!normalizedTag) {
+    showStatus('⚠️ 请先在「🏷️ 开头标签」输入框中输入或选择要添加的标签');
+    return 0;
+  }
+  if (DOM.prefixTagInput && DOM.prefixTagInput.value.trim() !== normalizedTag) {
+    DOM.prefixTagInput.value = normalizedTag;
+  }
+  savePrefixTagSettings();
+
+  const cards = Array.from(DOM.listContainer.children || []);
+  const validCards = cards.filter(c => c.textarea && c.textarea.value.trim().length > 0);
+  if (validCards.length === 0) {
+    if (cards.length > 0 && cards[0].textarea) {
+      saveTagUndoSnapshot();
+      cards[0].textarea.value = `${normalizedTag}\n`;
+      cards[0].previewCache = null;
+      updateStats();
+      showStatus(`🏷️ 已在空卡片开头填入标签：${normalizedTag.slice(0, 36)}${normalizedTag.length > 36 ? '...' : ''}`);
+      return 1;
+    }
+    showStatus('⚠️ 当前没有可添加标签的文案段落');
+    return 0;
+  }
+
+  saveTagUndoSnapshot();
+  let updatedCount = 0;
+  validCards.forEach(c => {
+    const nextVal = prependTagToText(c.textarea.value, normalizedTag);
+    if (nextVal !== c.textarea.value) {
+      c.textarea.value = nextVal;
+      c.previewCache = null;
+      updatedCount++;
+    }
+  });
+
+  updateStats();
+  const shortTag = normalizedTag.length > 42 ? `${normalizedTag.slice(0, 42)}...]` : normalizedTag;
+  showStatus(`🏷️ 已批量在 ${validCards.length} 段文案开头应用标签：${shortTag}`);
+  return updatedCount;
+}
+
+function removePrefixTagFromAllCards() {
+  const cards = Array.from(DOM.listContainer.children || []);
+  const hasLeading = cards.some(c => c.textarea && /^\s*\[[^\]]{1,300}\]\s*/.test(c.textarea.value));
+  if (!hasLeading) {
+    showStatus('当前没有文案包含开头 [...] 标签');
+    return 0;
+  }
+  saveTagUndoSnapshot();
+  let changed = 0;
+  cards.forEach(c => {
+    if (!c.textarea) return;
+    const cleaned = c.textarea.value.replace(/^(?:\s*\[[^\]]{1,300}\]\s*)+/, '').trim();
+    if (cleaned !== c.textarea.value.trim()) {
+      c.textarea.value = cleaned;
+      c.previewCache = null;
+      changed++;
+    }
+  });
+  updateStats();
+  showStatus(`🧹 已从 ${changed} 段文案开头移除 [...] 标签`);
+  return changed;
+}
+
+function inferSentenceTag(sentence, idx, total, styleMode, isPrayerContext) {
+  const s = sentence.trim();
+  if (!s || /^\[[^\]]{1,300}\]/.test(s)) return '';
+
+  if (styleMode === 'singing') {
+    if (idx === 0) return '[Sing everything in a powerful, raspy, soulful female Gospel style with emotional vibrato and sustained notes. No speaking, singing only.]';
+    if (/\b(amen|hallelujah|praise|glory)\b|阿门|哈利路亚/i.test(s)) return '[sustained notes, emotional vibrato]';
+    if (idx === total - 1 && total > 1) return '[slows down, soulful sustained finish]';
+    if (idx % 2 === 1) return '[emotional vibrato]';
+    return '';
+  }
+
+  if (styleMode === 'prayer' || (styleMode === 'auto' && isPrayerContext)) {
+    if (idx === 0) return '[reverent, warm and heartfelt]';
+    if (/\b(forgive|mercy|temptation|deliver us|evil|pain|sorrow|sin|tears)\b|赦免|怜悯|救我们|脱离凶恶|痛苦|软弱|眼泪/i.test(s)) {
+      return '[softly, pleading with deep emotion]';
+    }
+    if (/\b(bless|love|trust|family|loved ones|grace|peace|heal|miracle)\b|祝福|赐福|平安|医治|家人|所爱的人|恩典/i.test(s)) {
+      return '[warmly, tender and comforting]';
+    }
+    if (/\b(put amen|share this|type amen|declare|believe)\b|打上阿门|分享这段|相信神/i.test(s)) {
+      return '[uplifting, inspiring and encouraging]';
+    }
+    if (/^(put amen|amen|hallelujah)[.!?\s]*$/i.test(s) || /^(阿门|哈利路亚)[。！？!.\s]*$/.test(s)) {
+      return '[short pause] [reverent, resolute]';
+    }
+    if (idx === total - 1 && total > 2) return '[slows down, reverent]';
+    return '';
+  }
+
+  if (styleMode === 'energetic') {
+    if (idx === 0) return '[excited, energetic and confident]';
+    if (/[!！]$/.test(s)) return '[passionate, emphatic]';
+    if (/[?？]$/.test(s)) return '[curious, engaging tone]';
+    if (idx === total - 1 && total > 1) return '[uplifting, strong finish]';
+    return '';
+  }
+
+  if (styleMode === 'gentle') {
+    if (idx === 0) return '[softly, calm and soothing]';
+    if (/\b(sigh|miss|night|quiet|dream|heart|alone)\b|夜|安静|心|想念|温柔|轻声|梦/i.test(s)) return '[sighs softly, tender]';
+    if (idx === total - 1 && total > 1) return '[whispers, gentle fade]';
+    return '';
+  }
+
+  if (styleMode === 'story') {
+    if (idx === 0) return '[warm, expressive storytelling tone]';
+    if (/\b(suddenly|however|but then|in that moment|nevertheless)\b|突然|然而|就在这时|没想到|刹那间/i.test(s)) return '[short pause] [dramatic, tense]';
+    if (/[!！]$/.test(s)) return '[emotional, expressive]';
+    if (/[?？]$/.test(s)) return '[thoughtful, questioning]';
+    if (idx === total - 1 && total > 2) return '[slows down, reflective]';
+    return '';
+  }
+
+  if (/\b(whisper|secret|quietly|hush)\b|悄悄|耳语|低声|秘密/i.test(s)) return '[whispers]';
+  if (/\b(laugh|haha|funny|joy|smile)\b|哈哈|笑|喜悦|开心/i.test(s)) return '[chuckles WARMLY]';
+  if (/\b(sad|cry|tears|heartbroken|grief|pain)\b|哭|泪|心碎|悲伤|难过/i.test(s)) return '[sighs softly, sorrowful]';
+  if (/\b(suddenly|however|but|wait|listen)\b|突然|但是|然而|等等|听我说/i.test(s) && idx > 0) return '[short pause]';
+  if (/[!！]$/.test(s)) return '[excited, expressive]';
+  if (/[?？]$/.test(s)) return '[curious, expressive]';
+  if (idx === 0) return '[warm, expressive]';
+  if (idx === total - 1 && total > 2) return '[slows down, warm finish]';
+  return '';
+}
+
+function autoAddTagsToText(rawText, styleMode = 'auto') {
+  const text = String(rawText || '').trim();
+  if (!text) return '';
+
+  let leadingGlobalTags = '';
+  let body = text;
+  const globalMatch = text.match(/^(?:\[[^\]]{1,300}\]\s*)+/);
+  if (globalMatch) {
+    leadingGlobalTags = globalMatch[0].trim();
+    body = text.slice(globalMatch[0].length).trim();
+  }
+  if (!body) return leadingGlobalTags;
+
+  const cleanBody = body.replace(/\[[^\]]{1,80}\]\s*/g, '').replace(/\s{2,}/g, ' ').trim();
+  const isPrayerContext = /\b(our father|heaven|hallowed|thy kingdom|trespasses|amen|lord|god|jesus|pray|prayer|bless|holy|spirit|gospel|faith)\b|天父|祷告|祈祷|阿门|主啊|上帝|耶稣|赐福|圣灵|福音|恩典/i.test(cleanBody);
+
+  const sentences = cleanBody.match(/[^。！？!?；;\r\n]+(?:[。！？!?；;]+|\r?\n|$)/g) || [cleanBody];
+  const finalParts = [];
+  for (const chunk of sentences) {
+    const subParts = chunk.split(/(?<=[.!?])\s+(?=[A-Z"'\u4e00-\u9fff])/);
+    for (const sp of subParts) {
+      if (sp && sp.trim()) finalParts.push(sp.trim());
+    }
+  }
+
+  if (finalParts.length === 0) return text;
+
+  let taggedCount = 0;
+  const maxTags = Math.max(2, Math.min(6, Math.ceil(finalParts.length * 0.65)));
+  const resultSentences = finalParts.map((sent, idx) => {
+    if (taggedCount >= maxTags && idx !== finalParts.length - 1) return sent;
+    const tag = inferSentenceTag(sent, idx, finalParts.length, styleMode, isPrayerContext);
+    if (tag) {
+      taggedCount++;
+      return `${tag} ${sent}`;
+    }
+    return sent;
+  });
+
+  const joinedBody = resultSentences.join(' ');
+  if (leadingGlobalTags) {
+    if (styleMode === 'singing' && joinedBody.startsWith('[Sing everything')) {
+      return `${leadingGlobalTags}\n${joinedBody.replace(/^\[[^\]]+\]\s*/, '')}`;
+    }
+    return `${leadingGlobalTags}\n${joinedBody}`;
+  }
+  return joinedBody;
+}
+
+function autoTagSingleCard(card) {
+  if (!card || !card.textarea || !card.textarea.value.trim()) {
+    showStatus('⚠️ 请先在卡片中输入文案后再自动加标签');
+    return;
+  }
+  saveTagUndoSnapshot();
+  const styleMode = DOM.autoTagStyleSelect && DOM.autoTagStyleSelect.value ? DOM.autoTagStyleSelect.value : 'auto';
+  card.textarea.value = autoAddTagsToText(card.textarea.value, styleMode);
+  card.previewCache = null;
+  updateStats();
+  showStatus('🎭 已为当前段落智能添加表现力标签（可点击「↩️ 撤销标签操作」还原）');
+}
+
+function autoAddTagsToAllCards() {
+  const cards = Array.from(DOM.listContainer.children || []);
+  const validCards = cards.filter(c => c.textarea && c.textarea.value.trim().length > 0);
+  if (validCards.length === 0) {
+    showStatus('⚠️ 请先输入或粘贴文案后再使用「🎭 自动添加标签」');
+    return 0;
+  }
+
+  saveTagUndoSnapshot();
+  const styleMode = DOM.autoTagStyleSelect && DOM.autoTagStyleSelect.value ? DOM.autoTagStyleSelect.value : 'auto';
+  const userPrefixRaw = (DOM.prefixTagInput && DOM.prefixTagInput.value.trim()) ? normalizeBracketTag(DOM.prefixTagInput.value) : '';
+  const autoPrependChecked = Boolean(DOM.autoPrependTagToggle && DOM.autoPrependTagToggle.checked && userPrefixRaw);
+
+  let count = 0;
+  validCards.forEach(c => {
+    let nextText = c.textarea.value;
+    if (autoPrependChecked) {
+      nextText = prependTagToText(nextText, userPrefixRaw);
+    }
+    nextText = autoAddTagsToText(nextText, styleMode);
+    if (nextText !== c.textarea.value) {
+      c.textarea.value = nextText;
+      c.previewCache = null;
+      count++;
+    }
+  });
+
+  savePrefixTagSettings();
+  updateStats();
+  showStatus(`🎭 已为 ${validCards.length} 段文案智能添加表现力标签（如不满意可点「↩️ 撤销标签操作」）`);
+  return count;
+}
+
+function clearAllTagsFromAllCards() {
+  const cards = Array.from(DOM.listContainer.children || []);
+  const hasAnyTag = cards.some(c => c.textarea && /\[[^\]]{1,300}\]/.test(c.textarea.value));
+  if (!hasAnyTag) {
+    showStatus('当前文案中没有 [...] 标签');
+    return 0;
+  }
+  saveTagUndoSnapshot();
+  let changed = 0;
+  cards.forEach(c => {
+    if (!c.textarea) return;
+    const cleaned = c.textarea.value
+      .replace(/\[[^\]]{1,300}\]\s*/g, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/^\s+|\s+$/g, '');
+    if (cleaned !== c.textarea.value.trim()) {
+      c.textarea.value = cleaned;
+      c.previewCache = null;
+      changed++;
+    }
+  });
+  updateStats();
+  showStatus(`🧹 已清除 ${changed} 段文案中的全部 [...] 标签`);
+  return changed;
+}
+
+function initBatchTagControls() {
+  if (DOM.prefixTagPresetSelect) {
+    DOM.prefixTagPresetSelect.addEventListener('change', () => {
+      if (DOM.prefixTagPresetSelect.value && DOM.prefixTagInput) {
+        DOM.prefixTagInput.value = DOM.prefixTagPresetSelect.value;
+      }
+      savePrefixTagSettings();
+    });
+  }
+  if (DOM.prefixTagInput) {
+    DOM.prefixTagInput.addEventListener('input', savePrefixTagSettings);
+    DOM.prefixTagInput.addEventListener('keydown', (e) => {
+      if (e && e.key === 'Enter') {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        applyPrefixTagToAllCards();
+      }
+    });
+  }
+  if (DOM.autoPrependTagToggle) {
+    DOM.autoPrependTagToggle.addEventListener('change', savePrefixTagSettings);
+  }
+  if (DOM.autoTagStyleSelect) {
+    DOM.autoTagStyleSelect.addEventListener('change', savePrefixTagSettings);
+  }
+  if (DOM.prependTagAllBtn) {
+    DOM.prependTagAllBtn.addEventListener('click', applyPrefixTagToAllCards);
+  }
+  if (DOM.removePrefixTagAllBtn) {
+    DOM.removePrefixTagAllBtn.addEventListener('click', removePrefixTagFromAllCards);
+  }
+  if (DOM.autoAddTagsAllBtn) {
+    DOM.autoAddTagsAllBtn.addEventListener('click', autoAddTagsToAllCards);
+  }
+  if (DOM.clearAllTagsBtn) {
+    DOM.clearAllTagsBtn.addEventListener('click', clearAllTagsFromAllCards);
+  }
+  if (DOM.undoTagBtn) {
+    DOM.undoTagBtn.addEventListener('click', restoreTagUndoSnapshot);
+  }
+
+  chrome.storage.local.get(['batchTagSettings'], (res) => {
+    if (res && res.batchTagSettings) {
+      const s = res.batchTagSettings;
+      if (DOM.prefixTagPresetSelect && s.presetValue !== undefined) DOM.prefixTagPresetSelect.value = s.presetValue;
+      if (DOM.prefixTagInput && s.prefixTag !== undefined) DOM.prefixTagInput.value = s.prefixTag;
+      if (DOM.autoPrependTagToggle && s.autoPrepend !== undefined) DOM.autoPrependTagToggle.checked = Boolean(s.autoPrepend);
+      if (DOM.autoTagStyleSelect && s.autoTagStyle) DOM.autoTagStyleSelect.value = s.autoTagStyle;
     }
   });
 }

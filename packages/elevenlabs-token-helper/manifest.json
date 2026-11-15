@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Eleven V3 Batch Pro",
-  "version": "3.4.0",
-  "description": "基于网页登录 Token 授权的 ElevenLabs 批量生成工坊（支持音频效果与 GitHub 自动更新提示）",
+  "version": "3.5.0",
+  "description": "基于网页登录 Token 授权的 ElevenLabs 批量生成工坊（支持批量开头标签、智能自动加标签、音频效果与 GitHub 自动更新提示）",
   "icons": {
     "16": "icon.png",
     "48": "icon.png",
