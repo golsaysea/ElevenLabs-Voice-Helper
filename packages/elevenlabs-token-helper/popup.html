@@ -14,8 +14,21 @@
           <span class="logo-text">ElevenLabs 批量 Pro</span>
         </div>
         <div style="display:flex; gap:8px; align-items:center;">
+          <button id="checkUpdateBtn" class="icon-btn-round" title="检查 GitHub 最新版本更新">🔄</button>
           <button id="sidebarOtherToolsBtn" class="icon-btn-round" title="其他工具 (音效/音乐/变声/降噪/转文字)">🧰</button>
           <button id="themeToggle" class="icon-btn-round" title="切换亮/暗色主题">🌓</button>
+        </div>
+      </div>
+
+      <div id="githubUpdateBanner" class="github-update-banner hidden" role="status" aria-live="polite">
+        <div class="update-banner-top">
+          <span class="update-badge-dot"></span>
+          <span id="githubUpdateText" class="update-banner-text">🎉 发现新版本</span>
+          <button type="button" id="dismissUpdateBtn" class="update-dismiss-btn" title="暂不提醒">×</button>
+        </div>
+        <div class="update-banner-actions">
+          <button type="button" id="downloadUpdateBtn" class="btn-update-primary" title="直接下载最新插件 ZIP 压缩包到下载目录">⬇️ 一键下载更新包</button>
+          <button type="button" id="openGithubReleaseBtn" class="btn-update-link" title="打开 GitHub Releases 查看更新详情">查看详情</button>
         </div>
       </div>
 
@@ -86,6 +99,65 @@
           </select>
         </div>
       </div>
+
+      <div class="control-group audio-effects-group" id="audioEffectsSection" style="margin-top: 10px;">
+        <div class="voice-label-row" style="margin-bottom:4px;">
+          <label style="margin-bottom:0;">🎛️ 音频效果 (Audio Effects)</label>
+          <button type="button" id="refreshAudioEffectsBtn" class="btn-voice-clean" title="从 ElevenLabs 官方同步最新效果预设目录">🔄 同步效果</button>
+        </div>
+        <div class="effect-space-row">
+          <span class="effect-space-tag" title="空间混响环境 (Space / Environment)">🏠 空格</span>
+          <select id="audioEffectEnv" aria-label="空间混响效果">
+            <option value="">无 (默认干声)</option>
+            <option value="small_room">Small Room (小房间)</option>
+            <option value="big_room">Big Room (大房间)</option>
+            <option value="hall">Hall (大厅 / 礼堂)</option>
+            <option value="tunnel">Tunnel (隧道 / 走廊)</option>
+            <option value="street">Street (街道 / 户外)</option>
+            <option value="valley">Valley (山谷 / 回音)</option>
+            <option value="forest">Forest (森林 / 自然空间)</option>
+          </select>
+          <button type="button" id="clearAudioEffectEnvBtn" class="effect-clear-btn" title="移除空间效果">⊖</button>
+        </div>
+        <button type="button" id="toggleMoreEffectsBtn" class="btn-add-effect">+ 添加效果</button>
+        <div id="moreAudioEffectsPanel" class="more-effects-panel hidden">
+          <div class="effect-sub-row">
+            <label for="audioEffectFilter">🎙️ 声音滤镜</label>
+            <select id="audioEffectFilter">
+              <option value="">无滤镜 (原始音色)</option>
+              <option value="phone">Phone (电话听筒)</option>
+              <option value="bright_phone">Bright Phone (清晰电话线)</option>
+              <option value="low_quality_phone">Low Quality Phone (老旧电话)</option>
+              <option value="old_radio">Old Radio (复古收音机)</option>
+              <option value="cheap_microphone">Cheap Microphone (廉价麦克风)</option>
+              <option value="robot">Robot (机械电子音)</option>
+            </select>
+          </div>
+          <div class="effect-sub-row">
+            <label for="audioEffectNoise">☕ 环境背景音</label>
+            <select id="audioEffectNoise">
+              <option value="">无背景音 (纯净人声)</option>
+              <option value="cafe">Café (咖啡馆氛围)</option>
+              <option value="office">Office (办公室环境)</option>
+              <option value="call_center">Call Center (呼叫中心)</option>
+              <option value="city">City (城市街道背景)</option>
+              <option value="keyboard">Keyboard (键盘敲击声)</option>
+            </select>
+          </div>
+          <div class="slider-row compact-effect-slider">
+            <label for="audioEffectSendLevel">混响强度 (Send Level) <span id="valEffectSend">1.00</span></label>
+            <input type="range" id="audioEffectSendLevel" min="0" max="1" step="0.05" value="1">
+          </div>
+          <div class="slider-row compact-effect-slider">
+            <label for="audioEffectDistance">空间距离 (Distance) <span id="valEffectDistance">0.30</span></label>
+            <input type="range" id="audioEffectDistance" min="0" max="1" step="0.05" value="0.3">
+          </div>
+          <div class="effect-sub-actions">
+            <button type="button" id="resetAudioEffectsBtn" class="btn-voice-clean">重置全部效果</button>
+          </div>
+        </div>
+      </div>
+
       <div class="divider"></div>
 
       <div class="options-area">
@@ -96,6 +168,10 @@
         <div class="toggle-row">
           <label for="autoDelete" style="font-weight:bold; cursor:pointer; font-size:13px;">✅ 生成完自动删除对应文案</label>
           <input type="checkbox" id="autoDelete" checked>
+        </div>
+        <div class="toggle-row" style="margin-top: 8px;">
+          <label for="autoCheckUpdate" title="打开插件时自动连接 GitHub 检查是否有新版本并提示下载更新" style="font-weight:bold; cursor:pointer; font-size:13px;">🔄 自动检查 GitHub 更新提示</label>
+          <input type="checkbox" id="autoCheckUpdate" checked>
         </div>
       </div>
       

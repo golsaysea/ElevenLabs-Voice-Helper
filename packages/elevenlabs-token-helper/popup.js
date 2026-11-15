@@ -131,7 +131,26 @@ const DOM = {
   sttOutputText: document.getElementById('sttOutputText'),
   sttCopyBtn: document.getElementById('sttCopyBtn'),
   sttDownloadTxtBtn: document.getElementById('sttDownloadTxtBtn'),
-  sttSendToQueueBtn: document.getElementById('sttSendToQueueBtn')
+  sttSendToQueueBtn: document.getElementById('sttSendToQueueBtn'),
+  audioEffectEnv: document.getElementById('audioEffectEnv'),
+  clearAudioEffectEnvBtn: document.getElementById('clearAudioEffectEnvBtn'),
+  toggleMoreEffectsBtn: document.getElementById('toggleMoreEffectsBtn'),
+  moreAudioEffectsPanel: document.getElementById('moreAudioEffectsPanel'),
+  audioEffectFilter: document.getElementById('audioEffectFilter'),
+  audioEffectNoise: document.getElementById('audioEffectNoise'),
+  audioEffectSendLevel: document.getElementById('audioEffectSendLevel'),
+  audioEffectDistance: document.getElementById('audioEffectDistance'),
+  valEffectSend: document.getElementById('valEffectSend'),
+  valEffectDistance: document.getElementById('valEffectDistance'),
+  refreshAudioEffectsBtn: document.getElementById('refreshAudioEffectsBtn'),
+  resetAudioEffectsBtn: document.getElementById('resetAudioEffectsBtn'),
+  checkUpdateBtn: document.getElementById('checkUpdateBtn'),
+  githubUpdateBanner: document.getElementById('githubUpdateBanner'),
+  githubUpdateText: document.getElementById('githubUpdateText'),
+  dismissUpdateBtn: document.getElementById('dismissUpdateBtn'),
+  downloadUpdateBtn: document.getElementById('downloadUpdateBtn'),
+  openGithubReleaseBtn: document.getElementById('openGithubReleaseBtn'),
+  autoCheckUpdate: document.getElementById('autoCheckUpdate')
 };
 
 if (DOM.autoSplit3Min) {
@@ -141,6 +160,7 @@ if (DOM.autoSplit3Min) {
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   initEventListeners();
+  initAudioEffectsAndGithubUpdate();
   await loadGenerationSettings();
   await loadExportFolder();
   await loadDrafts();
@@ -986,7 +1006,8 @@ function buildPreviewSignature(firstSentence) {
     text: firstSentence,
     voiceId: DOM.voiceSelect.value,
     modelId: DOM.modelSelect.value,
-    voiceSettings: getVoiceSettings()
+    voiceSettings: getVoiceSettings(),
+    audioEffects: buildAudioEffectsPayload()
   });
 }
 
@@ -1518,28 +1539,39 @@ async function requestTtsStreamWithFallback({ auth, voiceId, text, modelId, voic
   const primarySettings = appState.workingFallbackModelId
     ? buildVoiceSettingsForModel(primaryModel, voiceSettings)
     : voiceSettings;
+  const activeEffects = buildAudioEffectsPayload();
 
-  const sendRequest = (targetModel, targetSettings) => {
+  const sendRequest = (targetModel, targetSettings, includeEffects = true) => {
+    const reqBody = {
+      text,
+      model_id: targetModel,
+      voice_settings: targetSettings
+    };
+    if (includeEffects && activeEffects && Object.keys(activeEffects).length > 0) {
+      reqBody.audio_effects = activeEffects;
+    }
     const fetchOptions = {
       method: 'POST',
       headers: buildAuthHeaders(auth, { 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        text,
-        model_id: targetModel,
-        voice_settings: targetSettings
-      })
+      body: JSON.stringify(reqBody)
     };
     if (signal) fetchOptions.signal = signal;
     return fetch(`${API_BASE}/v1/text-to-speech/${voiceId}/stream`, fetchOptions);
   };
 
-  const firstResponse = await sendRequest(primaryModel, primarySettings);
+  let firstResponse = await sendRequest(primaryModel, primarySettings, true);
   if (firstResponse.ok) return firstResponse;
 
   const firstError = await readResponseError(firstResponse);
   // 若是凭据失效或余额彻底耗尽，则直接报错，不作无谓重试
   if (firstResponse.status === 401 || /invalid_authorization|unauthorized|quota_exceeded|insufficient_credit/i.test(firstError)) {
     throw new Error(firstError);
+  }
+
+  // 若启用了音频效果且接口返回参数校验类错误，尝试剥离 audio_effects 重试一次同模型
+  if (activeEffects && [400, 404, 422].includes(firstResponse.status) && /audio_effects|environment|filter_preset|background_noise|effects/i.test(firstError)) {
+    const plainRes = await sendRequest(primaryModel, primarySettings, false);
+    if (plainRes.ok) return plainRes;
   }
 
   const hasEmotionTag = /\[\s*[A-Za-z\u4e00-\u9fa5][^\]]{0,35}\]/.test(String(text || ''));
@@ -2616,6 +2648,334 @@ function initVoiceCleanup() {
       executeVoiceCleanup([...appState.selectedVoiceCleanupIds]);
     });
   }
+}
+
+// ==========================================
+// 🎛️ ElevenLabs 音频效果 (Audio Effects) 与 🔄 GitHub 自动检查更新
+// ==========================================
+const HELPER_GITHUB_REPO = 'golsaysea/ElevenLabs-Voice-Helper';
+const HELPER_EXT_VERSION = '3.4.0';
+const HELPER_MANIFEST_PATH = 'packages/elevenlabs-token-helper/manifest.json';
+const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.4.0.zip';
+
+function buildAudioEffectsPayload() {
+  const envId = DOM.audioEffectEnv && DOM.audioEffectEnv.value ? String(DOM.audioEffectEnv.value).trim() : '';
+  const filterId = DOM.audioEffectFilter && DOM.audioEffectFilter.value ? String(DOM.audioEffectFilter.value).trim() : '';
+  const noiseId = DOM.audioEffectNoise && DOM.audioEffectNoise.value ? String(DOM.audioEffectNoise.value).trim() : '';
+  if (!envId && !filterId && !noiseId) return null;
+  const payload = {};
+  if (envId) {
+    payload.environment_id = envId;
+    const rawSend = DOM.audioEffectSendLevel && DOM.audioEffectSendLevel.value !== '' ? Number(DOM.audioEffectSendLevel.value) : 1;
+    const rawDist = DOM.audioEffectDistance && DOM.audioEffectDistance.value !== '' ? Number(DOM.audioEffectDistance.value) : 0.3;
+    payload.send_level = Number.isFinite(rawSend) ? Number(rawSend.toFixed(2)) : 1;
+    if (Number.isFinite(rawDist) && rawDist > 0) {
+      payload.distance = Number(rawDist.toFixed(2));
+    }
+  }
+  if (filterId) payload.filter_preset_id = filterId;
+  if (noiseId) payload.background_noise_id = noiseId;
+  return payload;
+}
+
+function updateAudioEffectsUI() {
+  const envId = DOM.audioEffectEnv ? DOM.audioEffectEnv.value : '';
+  const filterId = DOM.audioEffectFilter ? DOM.audioEffectFilter.value : '';
+  const noiseId = DOM.audioEffectNoise ? DOM.audioEffectNoise.value : '';
+  const sendVal = DOM.audioEffectSendLevel && DOM.audioEffectSendLevel.value !== '' ? Number(DOM.audioEffectSendLevel.value) : 1;
+  const distVal = DOM.audioEffectDistance && DOM.audioEffectDistance.value !== '' ? Number(DOM.audioEffectDistance.value) : 0.3;
+  if (DOM.valEffectSend) DOM.valEffectSend.textContent = (Number.isFinite(sendVal) ? sendVal : 1).toFixed(2);
+  if (DOM.valEffectDistance) DOM.valEffectDistance.textContent = (Number.isFinite(distVal) ? distVal : 0.3).toFixed(2);
+  if (DOM.clearAudioEffectEnvBtn && DOM.clearAudioEffectEnvBtn.style) {
+    DOM.clearAudioEffectEnvBtn.style.visibility = envId ? 'visible' : 'hidden';
+  }
+  if (DOM.toggleMoreEffectsBtn) {
+    const extraCount = (filterId ? 1 : 0) + (noiseId ? 1 : 0);
+    const isOpen = DOM.moreAudioEffectsPanel && !DOM.moreAudioEffectsPanel.classList.contains('hidden');
+    DOM.toggleMoreEffectsBtn.classList.toggle('active', extraCount > 0 || isOpen);
+    DOM.toggleMoreEffectsBtn.textContent = extraCount > 0
+      ? `🎛️ 已启用附加效果 (${extraCount}) ${isOpen ? '▲' : '▼'}`
+      : (isOpen ? '▲ 收起更多效果' : '+ 添加效果');
+  }
+}
+
+function saveAudioEffectsSettings() {
+  updateAudioEffectsUI();
+  for (const card of Array.from(DOM.listContainer.children || [])) {
+    updateCardMeta(card);
+  }
+  chrome.storage.local.set({
+    audioEffectsConfig: {
+      environment_id: DOM.audioEffectEnv ? DOM.audioEffectEnv.value : '',
+      filter_preset_id: DOM.audioEffectFilter ? DOM.audioEffectFilter.value : '',
+      background_noise_id: DOM.audioEffectNoise ? DOM.audioEffectNoise.value : '',
+      send_level: DOM.audioEffectSendLevel && DOM.audioEffectSendLevel.value !== '' ? Number(DOM.audioEffectSendLevel.value) : 1,
+      distance: DOM.audioEffectDistance && DOM.audioEffectDistance.value !== '' ? Number(DOM.audioEffectDistance.value) : 0.3
+    }
+  });
+}
+
+function mergeCatalogOptions(selectEl, items, idField) {
+  if (!selectEl || !Array.isArray(items)) return 0;
+  const children = Array.isArray(selectEl.children) ? selectEl.children : (selectEl.options ? Array.from(selectEl.options) : []);
+  const existing = new Set(children.map(o => o.value));
+  let added = 0;
+  for (const item of items) {
+    const id = item && (item[idField] || item.id);
+    if (!id || typeof id !== 'string' || existing.has(id)) continue;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = item.name ? `${item.name} (${id})` : id;
+    selectEl.appendChild(opt);
+    existing.add(id);
+    added++;
+  }
+  return added;
+}
+
+async function refreshAudioEffectsCatalog() {
+  const auth = getActiveAuth();
+  if (!auth) return showStatus('⚠️ 未检测到可用 Token，请先打开 ElevenLabs 网页');
+  if (DOM.refreshAudioEffectsBtn) DOM.refreshAudioEffectsBtn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/v1/audio-effects/catalog`, {
+      headers: buildAuthHeaders(auth)
+    });
+    if (!res.ok) throw new Error(await readResponseError(res));
+    const data = await res.json();
+    const addedEnv = mergeCatalogOptions(DOM.audioEffectEnv, data.environments, 'environment_id');
+    const addedFilter = mergeCatalogOptions(DOM.audioEffectFilter, data.filter_presets, 'filter_preset_id');
+    const addedNoise = mergeCatalogOptions(DOM.audioEffectNoise, data.background_noises, 'background_noise_id');
+    chrome.storage.local.set({ audioEffectsCatalogCache: { data, ts: Date.now() } });
+    showStatus(`✅ 已同步官方音频效果库（新增 ${addedEnv + addedFilter + addedNoise} 项预设）`);
+  } catch (err) {
+    showStatus(`⚠️ 官方效果库同步提示：${err.message || '当前使用内置预设'}`);
+  } finally {
+    if (DOM.refreshAudioEffectsBtn) DOM.refreshAudioEffectsBtn.disabled = false;
+  }
+}
+
+function getLocalHelperVersion() {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getManifest === 'function') {
+      const m = chrome.runtime.getManifest();
+      if (m && m.version) return String(m.version).trim();
+    }
+  } catch (_) {}
+  return appState.localVersionOverride || HELPER_EXT_VERSION;
+}
+
+function compareHelperVersions(v1, v2) {
+  const p1 = String(v1 || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const p2 = String(v2 || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(p1.length, p2.length, 3);
+  for (let i = 0; i < len; i++) {
+    const a = p1[i] || 0;
+    const b = p2[i] || 0;
+    if (a > b) return 1;
+    if (a < b) return -1;
+  }
+  return 0;
+}
+
+function renderHelperUpdateBanner(info) {
+  appState.latestUpdateInfo = info;
+  if (!info || !info.hasUpdate) {
+    if (DOM.githubUpdateBanner) DOM.githubUpdateBanner.classList.add('hidden');
+    if (DOM.checkUpdateBtn) DOM.checkUpdateBtn.classList.remove('has-update');
+    return;
+  }
+  if (DOM.checkUpdateBtn) {
+    DOM.checkUpdateBtn.classList.add('has-update');
+    DOM.checkUpdateBtn.title = `发现新版本 v${info.remoteVersion} (当前 v${info.localVersion})，点击查看或下载`;
+  }
+  if (DOM.githubUpdateText) {
+    DOM.githubUpdateText.textContent = `🎉 发现新版本 v${info.remoteVersion} (当前 v${info.localVersion})`;
+    DOM.githubUpdateText.title = info.notes || `GitHub 最新版本 v${info.remoteVersion}`;
+  }
+  if (DOM.githubUpdateBanner) DOM.githubUpdateBanner.classList.remove('hidden');
+}
+
+async function checkForGithubUpdate(manual = false) {
+  const localVersion = getLocalHelperVersion();
+  if (manual) showStatus(`🔄 正在连接 GitHub 检查更新 (当前 v${localVersion})...`);
+  try {
+    let remoteVersion = '';
+    let releaseUrl = `https://github.com/${HELPER_GITHUB_REPO}/releases/latest`;
+    let downloadUrl = '';
+    let notes = '';
+
+    try {
+      const manifestRes = await fetch(`https://raw.githubusercontent.com/${HELPER_GITHUB_REPO}/main/${HELPER_MANIFEST_PATH}?t=${Date.now()}`);
+      if (manifestRes && manifestRes.ok) {
+        const manifestData = await manifestRes.json();
+        if (manifestData && manifestData.version) {
+          remoteVersion = String(manifestData.version).replace(/^v/i, '').trim();
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const relRes = await fetch(`https://api.github.com/repos/${HELPER_GITHUB_REPO}/releases/latest`, {
+        headers: { Accept: 'application/vnd.github+json' }
+      });
+      if (relRes && relRes.ok) {
+        const relData = await relRes.json();
+        const tagVer = String(relData.tag_name || relData.name || '').replace(/^v/i, '').trim();
+        if (tagVer && (!remoteVersion || compareHelperVersions(tagVer, remoteVersion) >= 0)) {
+          remoteVersion = tagVer;
+        }
+        if (relData.html_url) releaseUrl = relData.html_url;
+        if (relData.body) notes = String(relData.body).slice(0, 400);
+        if (Array.isArray(relData.assets)) {
+          const matchedAsset = relData.assets.find(a => a && typeof a.name === 'string' && a.name.includes('token-helper') && a.name.endsWith('.zip'))
+            || relData.assets.find(a => a && typeof a.name === 'string' && a.name.endsWith('.zip'));
+          if (matchedAsset && matchedAsset.browser_download_url) {
+            downloadUrl = matchedAsset.browser_download_url;
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (!remoteVersion) {
+      if (manual) showStatus('⚠️ 无法连接 GitHub 获取版本信息，请检查网络或稍后重试');
+      return null;
+    }
+
+    if (!downloadUrl) {
+      downloadUrl = `https://github.com/${HELPER_GITHUB_REPO}/releases/latest/download/elevenlabs-token-helper-v${remoteVersion}.zip`;
+    }
+
+    const hasUpdate = compareHelperVersions(remoteVersion, localVersion) > 0;
+    const info = { hasUpdate, localVersion, remoteVersion, releaseUrl, downloadUrl, notes, checkedAt: Date.now() };
+    chrome.storage.local.set({ githubUpdateCache: info });
+    renderHelperUpdateBanner(info);
+
+    if (manual) {
+      if (hasUpdate) {
+        showStatus(`🎉 发现新版本 v${remoteVersion}！请点击上方绿色「⬇️ 一键下载更新包」升级`);
+      } else {
+        showStatus(`✅ 当前已是最新版本 (v${localVersion})`);
+      }
+    }
+    return info;
+  } catch (err) {
+    if (manual) showStatus(`⚠️ 检查更新失败：${err.message || '网络异常'}`);
+    return null;
+  }
+}
+
+function initAudioEffectsAndGithubUpdate() {
+  if (DOM.audioEffectEnv) DOM.audioEffectEnv.addEventListener('change', saveAudioEffectsSettings);
+  if (DOM.audioEffectFilter) DOM.audioEffectFilter.addEventListener('change', saveAudioEffectsSettings);
+  if (DOM.audioEffectNoise) DOM.audioEffectNoise.addEventListener('change', saveAudioEffectsSettings);
+  if (DOM.audioEffectSendLevel) DOM.audioEffectSendLevel.addEventListener('input', saveAudioEffectsSettings);
+  if (DOM.audioEffectDistance) DOM.audioEffectDistance.addEventListener('input', saveAudioEffectsSettings);
+  if (DOM.clearAudioEffectEnvBtn) {
+    DOM.clearAudioEffectEnvBtn.addEventListener('click', () => {
+      if (DOM.audioEffectEnv) DOM.audioEffectEnv.value = '';
+      saveAudioEffectsSettings();
+      showStatus('已移除空间混响效果');
+    });
+  }
+  if (DOM.toggleMoreEffectsBtn && DOM.moreAudioEffectsPanel) {
+    DOM.toggleMoreEffectsBtn.addEventListener('click', () => {
+      DOM.moreAudioEffectsPanel.classList.toggle('hidden');
+      updateAudioEffectsUI();
+    });
+  }
+  if (DOM.resetAudioEffectsBtn) {
+    DOM.resetAudioEffectsBtn.addEventListener('click', () => {
+      if (DOM.audioEffectEnv) DOM.audioEffectEnv.value = '';
+      if (DOM.audioEffectFilter) DOM.audioEffectFilter.value = '';
+      if (DOM.audioEffectNoise) DOM.audioEffectNoise.value = '';
+      if (DOM.audioEffectSendLevel) DOM.audioEffectSendLevel.value = '1';
+      if (DOM.audioEffectDistance) DOM.audioEffectDistance.value = '0.3';
+      saveAudioEffectsSettings();
+      showStatus('已重置全部音频效果');
+    });
+  }
+  if (DOM.refreshAudioEffectsBtn) {
+    DOM.refreshAudioEffectsBtn.addEventListener('click', refreshAudioEffectsCatalog);
+  }
+  if (DOM.checkUpdateBtn) {
+    DOM.checkUpdateBtn.addEventListener('click', () => checkForGithubUpdate(true));
+  }
+  if (DOM.dismissUpdateBtn && DOM.githubUpdateBanner) {
+    DOM.dismissUpdateBtn.addEventListener('click', () => {
+      DOM.githubUpdateBanner.classList.add('hidden');
+      if (appState.latestUpdateInfo && appState.latestUpdateInfo.remoteVersion) {
+        chrome.storage.local.set({ dismissedUpdateVersion: appState.latestUpdateInfo.remoteVersion });
+      }
+    });
+  }
+  if (DOM.openGithubReleaseBtn) {
+    DOM.openGithubReleaseBtn.addEventListener('click', () => {
+      const targetUrl = (appState.latestUpdateInfo && appState.latestUpdateInfo.releaseUrl) || `https://github.com/${HELPER_GITHUB_REPO}/releases/latest`;
+      if (chrome.tabs && typeof chrome.tabs.create === 'function') {
+        chrome.tabs.create({ url: targetUrl });
+      }
+    });
+  }
+  if (DOM.downloadUpdateBtn) {
+    DOM.downloadUpdateBtn.addEventListener('click', async () => {
+      const ver = (appState.latestUpdateInfo && appState.latestUpdateInfo.remoteVersion) || HELPER_EXT_VERSION;
+      const targetUrl = (appState.latestUpdateInfo && appState.latestUpdateInfo.downloadUrl) || `https://github.com/${HELPER_GITHUB_REPO}/releases/latest/download/${HELPER_DEFAULT_ZIP}`;
+      const filename = `ElevenLabs_Pro/插件更新包/elevenlabs-token-helper-v${ver}.zip`;
+      try {
+        await chrome.downloads.download({ url: targetUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+        showStatus(`⬇️ 正在下载更新包 v${ver}！下载完成后解压覆盖原插件文件夹，在扩展页面点刷新即可`);
+      } catch (_) {
+        if (chrome.tabs && typeof chrome.tabs.create === 'function') {
+          chrome.tabs.create({ url: targetUrl });
+        }
+      }
+    });
+  }
+  if (DOM.autoCheckUpdate) {
+    DOM.autoCheckUpdate.addEventListener('change', () => {
+      chrome.storage.local.set({ autoCheckGithubUpdate: Boolean(DOM.autoCheckUpdate.checked) });
+      if (DOM.autoCheckUpdate.checked) checkForGithubUpdate(true);
+    });
+  }
+
+  chrome.storage.local.get(['audioEffectsConfig', 'audioEffectsCatalogCache', 'autoCheckGithubUpdate', 'githubUpdateCache', 'dismissedUpdateVersion'], (res) => {
+    if (res && res.audioEffectsCatalogCache && res.audioEffectsCatalogCache.data) {
+      const d = res.audioEffectsCatalogCache.data;
+      mergeCatalogOptions(DOM.audioEffectEnv, d.environments, 'environment_id');
+      mergeCatalogOptions(DOM.audioEffectFilter, d.filter_presets, 'filter_preset_id');
+      mergeCatalogOptions(DOM.audioEffectNoise, d.background_noises, 'background_noise_id');
+    }
+    if (res && res.audioEffectsConfig) {
+      const cfg = res.audioEffectsConfig;
+      if (DOM.audioEffectEnv && cfg.environment_id !== undefined) DOM.audioEffectEnv.value = cfg.environment_id;
+      if (DOM.audioEffectFilter && cfg.filter_preset_id !== undefined) DOM.audioEffectFilter.value = cfg.filter_preset_id;
+      if (DOM.audioEffectNoise && cfg.background_noise_id !== undefined) DOM.audioEffectNoise.value = cfg.background_noise_id;
+      if (DOM.audioEffectSendLevel && cfg.send_level !== undefined) DOM.audioEffectSendLevel.value = String(cfg.send_level);
+      if (DOM.audioEffectDistance && cfg.distance !== undefined) DOM.audioEffectDistance.value = String(cfg.distance);
+      if ((cfg.filter_preset_id || cfg.background_noise_id) && DOM.moreAudioEffectsPanel) {
+        DOM.moreAudioEffectsPanel.classList.remove('hidden');
+      }
+    }
+    updateAudioEffectsUI();
+
+    const autoCheck = res && res.autoCheckGithubUpdate !== undefined ? Boolean(res.autoCheckGithubUpdate) : true;
+    if (DOM.autoCheckUpdate) DOM.autoCheckUpdate.checked = autoCheck;
+
+    const hasRealExtensionRuntime = Boolean(typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getManifest === 'function');
+    if (autoCheck && hasRealExtensionRuntime && typeof setTimeout === 'function') {
+      const cached = res && res.githubUpdateCache;
+      const localVer = getLocalHelperVersion();
+      if (cached && cached.remoteVersion && (Date.now() - (cached.checkedAt || 0) < 1800000)) {
+        const hasUpdate = compareHelperVersions(cached.remoteVersion, localVer) > 0;
+        if (hasUpdate && res.dismissedUpdateVersion !== cached.remoteVersion) {
+          renderHelperUpdateBanner({ ...cached, localVersion: localVer, hasUpdate: true });
+        }
+      } else {
+        setTimeout(() => checkForGithubUpdate(false), 1200);
+      }
+    }
+  });
 }
 
 

@@ -870,21 +870,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${cfg.voice}?output_format=${cfg.apiFormat}`;
     const candidateModels = [...new Set([cfg.model, 'eleven_multilingual_v2', 'eleven_flash_v2_5', 'eleven_turbo_v2_5'])];
+    const activeEffects = buildAudioEffectsPayload();
     let resp = null;
     for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
       const targetModel = candidateModels[mIdx];
+      const reqBody = {
+        text: text,
+        model_id: targetModel,
+        voice_settings: buildSettings(targetModel)
+      };
+      if (activeEffects && Object.keys(activeEffects).length > 0 && !String(cfg.apiFormat || '').startsWith('pcm')) {
+        reqBody.audio_effects = activeEffects;
+      }
       resp = await fetch(url, {
         method: 'POST',
         headers: {
           'xi-api-key': cfg.key,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          text: text,
-          model_id: targetModel,
-          voice_settings: buildSettings(targetModel)
-        })
+        body: JSON.stringify(reqBody)
       });
+      if (!resp.ok && reqBody.audio_effects && [400, 404, 422].includes(resp.status)) {
+        const fallbackBody = { ...reqBody };
+        delete fallbackBody.audio_effects;
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'xi-api-key': cfg.key,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(fallbackBody)
+        });
+      }
       if (resp.ok || resp.status === 401 || resp.status === 429) break;
       const errCloneText = await resp.clone().text().catch(() => '');
       if (!/model|stability|invalid|unsupported|not_found/i.test(errCloneText) && resp.status !== 400 && resp.status !== 404 && resp.status !== 422) {
@@ -1849,7 +1866,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const sim = ui.sim ? parseFloat(ui.sim.value) : 0.75;
     const style = ui.style ? parseFloat(ui.style.value) : 0;
     const boost = ui.boost ? ui.boost.checked : true;
-    const cacheKey = [selectedVoiceId, modelId, stab, sim, style, boost, firstSentence].join('|');
+    const activeEffects = buildAudioEffectsPayload();
+    const cacheKey = [selectedVoiceId, modelId, stab, sim, style, boost, JSON.stringify(activeEffects || null), firstSentence].join('|');
 
     activePreviewCard = card;
     previewBtn.disabled = true;
@@ -1866,18 +1884,34 @@ document.addEventListener('DOMContentLoaded', () => {
           settings.use_speaker_boost = boost;
         }
         const url = `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}?output_format=mp3_44100_128`;
-        const resp = await fetch(url, {
+        const reqBody = {
+          text: firstSentence,
+          model_id: modelId,
+          voice_settings: settings
+        };
+        if (activeEffects && Object.keys(activeEffects).length > 0) {
+          reqBody.audio_effects = activeEffects;
+        }
+        let resp = await fetch(url, {
           method: 'POST',
           headers: {
             'xi-api-key': state.currentKey,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            text: firstSentence,
-            model_id: modelId,
-            voice_settings: settings
-          })
+          body: JSON.stringify(reqBody)
         });
+        if (!resp.ok && reqBody.audio_effects && [400, 404, 422].includes(resp.status)) {
+          const fallbackBody = { ...reqBody };
+          delete fallbackBody.audio_effects;
+          resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'xi-api-key': state.currentKey,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(fallbackBody)
+          });
+        }
         if (!resp.ok) {
           throw new Error(await readElevenError(resp, '试听失败'));
         }
@@ -3189,5 +3223,355 @@ document.addEventListener('DOMContentLoaded', () => {
       executeVoiceCleanup([...state.selectedVoiceCleanupIds]);
     });
   }
+
+  // ==========================================
+  // 🎛️ 13. ElevenLabs 音频效果 (Audio Effects) 与 🔄 GitHub 自动检查更新
+  // ==========================================
+  const audioEffectEnvEl = document.getElementById('audioEffectEnv');
+  const clearAudioEffectEnvBtn = document.getElementById('clearAudioEffectEnvBtn');
+  const toggleMoreEffectsBtn = document.getElementById('toggleMoreEffectsBtn');
+  const moreAudioEffectsPanel = document.getElementById('moreAudioEffectsPanel');
+  const audioEffectFilterEl = document.getElementById('audioEffectFilter');
+  const audioEffectNoiseEl = document.getElementById('audioEffectNoise');
+  const audioEffectSendLevelEl = document.getElementById('audioEffectSendLevel');
+  const audioEffectDistanceEl = document.getElementById('audioEffectDistance');
+  const valEffectSendEl = document.getElementById('valEffectSend');
+  const valEffectDistanceEl = document.getElementById('valEffectDistance');
+  const refreshAudioEffectsBtn = document.getElementById('refreshAudioEffectsBtn');
+  const resetAudioEffectsBtn = document.getElementById('resetAudioEffectsBtn');
+
+  function buildAudioEffectsPayload() {
+    const envId = audioEffectEnvEl ? audioEffectEnvEl.value.trim() : '';
+    const filterId = audioEffectFilterEl ? audioEffectFilterEl.value.trim() : '';
+    const noiseId = audioEffectNoiseEl ? audioEffectNoiseEl.value.trim() : '';
+    if (!envId && !filterId && !noiseId) return null;
+    const payload = {};
+    if (envId) {
+      payload.environment_id = envId;
+      const sendLevel = audioEffectSendLevelEl ? Number(audioEffectSendLevelEl.value) : 1;
+      const distance = audioEffectDistanceEl ? Number(audioEffectDistanceEl.value) : 0.3;
+      payload.send_level = Number.isFinite(sendLevel) ? Number(sendLevel.toFixed(2)) : 1;
+      if (Number.isFinite(distance) && distance > 0) {
+        payload.distance = Number(distance.toFixed(2));
+      }
+    }
+    if (filterId) payload.filter_preset_id = filterId;
+    if (noiseId) payload.background_noise_id = noiseId;
+    return payload;
+  }
+
+  function updateAudioEffectsUI() {
+    const envId = audioEffectEnvEl ? audioEffectEnvEl.value : '';
+    const filterId = audioEffectFilterEl ? audioEffectFilterEl.value : '';
+    const noiseId = audioEffectNoiseEl ? audioEffectNoiseEl.value : '';
+    const sendVal = audioEffectSendLevelEl ? Number(audioEffectSendLevelEl.value) : 1;
+    const distVal = audioEffectDistanceEl ? Number(audioEffectDistanceEl.value) : 0.3;
+    if (valEffectSendEl) valEffectSendEl.textContent = sendVal.toFixed(2);
+    if (valEffectDistanceEl) valEffectDistanceEl.textContent = distVal.toFixed(2);
+    if (clearAudioEffectEnvBtn) {
+      clearAudioEffectEnvBtn.style.visibility = envId ? 'visible' : 'hidden';
+    }
+    if (toggleMoreEffectsBtn) {
+      const extraCount = (filterId ? 1 : 0) + (noiseId ? 1 : 0);
+      const isOpen = moreAudioEffectsPanel && !moreAudioEffectsPanel.classList.contains('hidden');
+      toggleMoreEffectsBtn.classList.toggle('active', extraCount > 0 || isOpen);
+      toggleMoreEffectsBtn.textContent = extraCount > 0
+        ? `🎛️ 已启用附加效果 (${extraCount}) ${isOpen ? '▲' : '▼'}`
+        : (isOpen ? '▲ 收起更多效果' : '+ 添加效果');
+    }
+  }
+
+  function saveAudioEffectsSettings() {
+    updateAudioEffectsUI();
+    chrome.storage.local.set({
+      audio_effects_config: {
+        environment_id: audioEffectEnvEl ? audioEffectEnvEl.value : '',
+        filter_preset_id: audioEffectFilterEl ? audioEffectFilterEl.value : '',
+        background_noise_id: audioEffectNoiseEl ? audioEffectNoiseEl.value : '',
+        send_level: audioEffectSendLevelEl ? Number(audioEffectSendLevelEl.value) : 1,
+        distance: audioEffectDistanceEl ? Number(audioEffectDistanceEl.value) : 0.3
+      }
+    });
+  }
+
+  function mergeCatalogOptions(selectEl, items, idField) {
+    if (!selectEl || !Array.isArray(items)) return 0;
+    const existing = new Set(Array.from(selectEl.options).map(o => o.value));
+    let added = 0;
+    for (const item of items) {
+      const id = item && (item[idField] || item.id);
+      if (!id || typeof id !== 'string' || existing.has(id)) continue;
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = item.name ? `${item.name} (${id})` : id;
+      selectEl.appendChild(opt);
+      existing.add(id);
+      added++;
+    }
+    return added;
+  }
+
+  async function refreshAudioEffectsCatalog() {
+    if (!state.currentKey) return setStatus('请先配置 API Key 后再同步官方音频效果目录', 'error');
+    if (refreshAudioEffectsBtn) refreshAudioEffectsBtn.disabled = true;
+    try {
+      const res = await fetch('https://api.elevenlabs.io/v1/audio-effects/catalog', {
+        headers: { 'xi-api-key': state.currentKey }
+      });
+      if (!res.ok) throw new Error(await readElevenError(res, '音频效果目录同步失败'));
+      const data = await res.json();
+      const addedEnv = mergeCatalogOptions(audioEffectEnvEl, data.environments, 'environment_id');
+      const addedFilter = mergeCatalogOptions(audioEffectFilterEl, data.filter_presets, 'filter_preset_id');
+      const addedNoise = mergeCatalogOptions(audioEffectNoiseEl, data.background_noises, 'background_noise_id');
+      chrome.storage.local.set({ audio_effects_catalog_cache: { data, ts: Date.now() } });
+      setStatus(`✅ 已同步官方音频效果库（新增 ${addedEnv + addedFilter + addedNoise} 项预设）`);
+    } catch (e) {
+      setStatus(`⚠️ 官方效果库同步提示：${e.message || '当前使用内置预设'}`, 'error');
+    } finally {
+      if (refreshAudioEffectsBtn) refreshAudioEffectsBtn.disabled = false;
+    }
+  }
+
+  if (audioEffectEnvEl) audioEffectEnvEl.addEventListener('change', saveAudioEffectsSettings);
+  if (audioEffectFilterEl) audioEffectFilterEl.addEventListener('change', saveAudioEffectsSettings);
+  if (audioEffectNoiseEl) audioEffectNoiseEl.addEventListener('change', saveAudioEffectsSettings);
+  if (audioEffectSendLevelEl) audioEffectSendLevelEl.addEventListener('input', saveAudioEffectsSettings);
+  if (audioEffectDistanceEl) audioEffectDistanceEl.addEventListener('input', saveAudioEffectsSettings);
+  if (clearAudioEffectEnvBtn) {
+    clearAudioEffectEnvBtn.addEventListener('click', () => {
+      if (audioEffectEnvEl) audioEffectEnvEl.value = '';
+      saveAudioEffectsSettings();
+      setStatus('已移除空间混响效果');
+    });
+  }
+  if (toggleMoreEffectsBtn && moreAudioEffectsPanel) {
+    toggleMoreEffectsBtn.addEventListener('click', () => {
+      moreAudioEffectsPanel.classList.toggle('hidden');
+      updateAudioEffectsUI();
+    });
+  }
+  if (resetAudioEffectsBtn) {
+    resetAudioEffectsBtn.addEventListener('click', () => {
+      if (audioEffectEnvEl) audioEffectEnvEl.value = '';
+      if (audioEffectFilterEl) audioEffectFilterEl.value = '';
+      if (audioEffectNoiseEl) audioEffectNoiseEl.value = '';
+      if (audioEffectSendLevelEl) audioEffectSendLevelEl.value = '1';
+      if (audioEffectDistanceEl) audioEffectDistanceEl.value = '0.3';
+      saveAudioEffectsSettings();
+      setStatus('已重置全部音频效果');
+    });
+  }
+  if (refreshAudioEffectsBtn) {
+    refreshAudioEffectsBtn.addEventListener('click', refreshAudioEffectsCatalog);
+  }
+
+  // 🔄 GitHub 自动检查更新与提示下载
+  const GITHUB_REPO = 'golsaysea/ElevenLabs-Batch-TTS-Pro';
+  const CURRENT_EXT_VERSION = '6.7.0';
+  const REMOTE_MANIFEST_PATH = 'packages/elevenlabs-batch-standard/manifest.json';
+  const DEFAULT_ZIP_NAME = 'elevenlabs-batch-standard-v6.7.0.zip';
+  const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+  const githubUpdateBanner = document.getElementById('githubUpdateBanner');
+  const githubUpdateText = document.getElementById('githubUpdateText');
+  const dismissUpdateBtn = document.getElementById('dismissUpdateBtn');
+  const downloadUpdateBtn = document.getElementById('downloadUpdateBtn');
+  const openGithubReleaseBtn = document.getElementById('openGithubReleaseBtn');
+  const autoCheckUpdateEl = document.getElementById('autoCheckUpdate');
+  let latestUpdateInfo = null;
+
+  function getLocalVersion() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getManifest === 'function') {
+        const m = chrome.runtime.getManifest();
+        if (m && m.version) return String(m.version).trim();
+      }
+    } catch (_) {}
+    return CURRENT_EXT_VERSION;
+  }
+
+  function compareVersions(v1, v2) {
+    const p1 = String(v1 || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+    const p2 = String(v2 || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(p1.length, p2.length, 3);
+    for (let i = 0; i < len; i++) {
+      const a = p1[i] || 0;
+      const b = p2[i] || 0;
+      if (a > b) return 1;
+      if (a < b) return -1;
+    }
+    return 0;
+  }
+
+  function renderGithubUpdateBanner(info) {
+    latestUpdateInfo = info;
+    if (!info || !info.hasUpdate) {
+      if (githubUpdateBanner) githubUpdateBanner.classList.add('hidden');
+      if (checkUpdateBtn) checkUpdateBtn.classList.remove('has-update');
+      return;
+    }
+    if (checkUpdateBtn) {
+      checkUpdateBtn.classList.add('has-update');
+      checkUpdateBtn.title = `发现新版本 v${info.remoteVersion} (当前 v${info.localVersion})，点击查看或下载`;
+    }
+    if (githubUpdateText) {
+      githubUpdateText.textContent = `🎉 发现新版本 v${info.remoteVersion} (当前 v${info.localVersion})`;
+      githubUpdateText.title = info.notes || `GitHub 最新版本 v${info.remoteVersion}`;
+    }
+    if (githubUpdateBanner) githubUpdateBanner.classList.remove('hidden');
+  }
+
+  async function checkForGithubUpdate(manual = false) {
+    const localVersion = getLocalVersion();
+    if (manual) setStatus(`🔄 正在连接 GitHub 检查更新 (当前 v${localVersion})...`);
+    try {
+      let remoteVersion = '';
+      let releaseUrl = `https://github.com/${GITHUB_REPO}/releases/latest`;
+      let downloadUrl = '';
+      let notes = '';
+
+      try {
+        const manifestRes = await fetch(`https://raw.githubusercontent.com/${GITHUB_REPO}/main/${REMOTE_MANIFEST_PATH}?t=${Date.now()}`);
+        if (manifestRes.ok) {
+          const manifestData = await manifestRes.json();
+          if (manifestData && manifestData.version) {
+            remoteVersion = String(manifestData.version).replace(/^v/i, '').trim();
+          }
+        }
+      } catch (_) {}
+
+      try {
+        const relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+          headers: { 'Accept': 'application/vnd.github+json' }
+        });
+        if (relRes.ok) {
+          const relData = await relRes.json();
+          if (relData.html_url) releaseUrl = relData.html_url;
+          if (relData.body) notes = String(relData.body).slice(0, 400);
+          if (Array.isArray(relData.assets)) {
+            const matchedAsset = relData.assets.find(a => a && typeof a.name === 'string' && a.name.includes('batch-standard') && a.name.endsWith('.zip'))
+              || relData.assets.find(a => a && typeof a.name === 'string' && a.name.endsWith('.zip'));
+            if (matchedAsset && matchedAsset.browser_download_url) {
+              downloadUrl = matchedAsset.browser_download_url;
+              const matchVer = matchedAsset.name.match(/v(\d+\.\d+\.\d+)\.zip$/i);
+              if (matchVer && (!remoteVersion || compareVersions(matchVer[1], remoteVersion) >= 0)) {
+                remoteVersion = matchVer[1];
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (!remoteVersion) {
+        if (manual) setStatus('⚠️ 无法连接 GitHub 获取版本信息，请检查网络或稍后重试', 'error');
+        return null;
+      }
+
+      if (!downloadUrl) {
+        downloadUrl = `https://github.com/${GITHUB_REPO}/releases/latest/download/elevenlabs-batch-standard-v${remoteVersion}.zip`;
+      }
+
+      const hasUpdate = compareVersions(remoteVersion, localVersion) > 0;
+      const info = { hasUpdate, localVersion, remoteVersion, releaseUrl, downloadUrl, notes, checkedAt: Date.now() };
+      chrome.storage.local.set({ github_update_cache: info });
+      renderGithubUpdateBanner(info);
+
+      if (manual) {
+        if (hasUpdate) {
+          setStatus(`🎉 发现新版本 v${remoteVersion}！请点击上方绿色「⬇️ 一键下载更新包」升级`);
+        } else {
+          setStatus(`✅ 当前已是最新版本 (v${localVersion})`);
+        }
+      }
+      return info;
+    } catch (err) {
+      if (manual) setStatus(`⚠️ 检查更新失败：${err.message || '网络异常'}`, 'error');
+      return null;
+    }
+  }
+
+  if (checkUpdateBtn) {
+    checkUpdateBtn.addEventListener('click', () => checkForGithubUpdate(true));
+  }
+  if (dismissUpdateBtn && githubUpdateBanner) {
+    dismissUpdateBtn.addEventListener('click', () => {
+      githubUpdateBanner.classList.add('hidden');
+      if (latestUpdateInfo && latestUpdateInfo.remoteVersion) {
+        chrome.storage.local.set({ dismissed_update_version: latestUpdateInfo.remoteVersion });
+      }
+    });
+  }
+  if (openGithubReleaseBtn) {
+    openGithubReleaseBtn.addEventListener('click', () => {
+      const targetUrl = (latestUpdateInfo && latestUpdateInfo.releaseUrl) || `https://github.com/${GITHUB_REPO}/releases/latest`;
+      if (chrome.tabs && typeof chrome.tabs.create === 'function') {
+        chrome.tabs.create({ url: targetUrl });
+      } else {
+        window.open(targetUrl, '_blank');
+      }
+    });
+  }
+  if (downloadUpdateBtn) {
+    downloadUpdateBtn.addEventListener('click', () => {
+      const ver = (latestUpdateInfo && latestUpdateInfo.remoteVersion) || CURRENT_EXT_VERSION;
+      const targetUrl = (latestUpdateInfo && latestUpdateInfo.downloadUrl) || `https://github.com/${GITHUB_REPO}/releases/latest/download/${DEFAULT_ZIP_NAME}`;
+      const filename = `ElevenLabs_Pro/插件更新包/elevenlabs-batch-standard-v${ver}.zip`;
+      if (chrome.downloads && typeof chrome.downloads.download === 'function') {
+        chrome.downloads.download({ url: targetUrl, filename, saveAs: false, conflictAction: 'uniquify' }, (downloadId) => {
+          if (chrome.runtime && chrome.runtime.lastError || !downloadId) {
+            if (chrome.tabs && typeof chrome.tabs.create === 'function') chrome.tabs.create({ url: targetUrl });
+            else window.open(targetUrl, '_blank');
+            return;
+          }
+          setStatus(`⬇️ 正在下载更新包 v${ver}！下载完成后解压覆盖原插件文件夹，在扩展页面点刷新即可`);
+        });
+      } else {
+        window.open(targetUrl, '_blank');
+      }
+    });
+  }
+  if (autoCheckUpdateEl) {
+    autoCheckUpdateEl.addEventListener('change', () => {
+      chrome.storage.local.set({ auto_check_github_update: autoCheckUpdateEl.checked });
+      if (autoCheckUpdateEl.checked) checkForGithubUpdate(true);
+    });
+  }
+
+  chrome.storage.local.get(['audio_effects_config', 'audio_effects_catalog_cache', 'auto_check_github_update', 'github_update_cache', 'dismissed_update_version'], (res) => {
+    if (res && res.audio_effects_catalog_cache && res.audio_effects_catalog_cache.data) {
+      const d = res.audio_effects_catalog_cache.data;
+      mergeCatalogOptions(audioEffectEnvEl, d.environments, 'environment_id');
+      mergeCatalogOptions(audioEffectFilterEl, d.filter_presets, 'filter_preset_id');
+      mergeCatalogOptions(audioEffectNoiseEl, d.background_noises, 'background_noise_id');
+    }
+    if (res && res.audio_effects_config) {
+      const cfg = res.audio_effects_config;
+      if (audioEffectEnvEl && cfg.environment_id !== undefined) audioEffectEnvEl.value = cfg.environment_id;
+      if (audioEffectFilterEl && cfg.filter_preset_id !== undefined) audioEffectFilterEl.value = cfg.filter_preset_id;
+      if (audioEffectNoiseEl && cfg.background_noise_id !== undefined) audioEffectNoiseEl.value = cfg.background_noise_id;
+      if (audioEffectSendLevelEl && cfg.send_level !== undefined) audioEffectSendLevelEl.value = String(cfg.send_level);
+      if (audioEffectDistanceEl && cfg.distance !== undefined) audioEffectDistanceEl.value = String(cfg.distance);
+      if ((cfg.filter_preset_id || cfg.background_noise_id) && moreAudioEffectsPanel) {
+        moreAudioEffectsPanel.classList.remove('hidden');
+      }
+    }
+    updateAudioEffectsUI();
+
+    const autoCheck = res && res.auto_check_github_update !== undefined ? Boolean(res.auto_check_github_update) : true;
+    if (autoCheckUpdateEl) autoCheckUpdateEl.checked = autoCheck;
+
+    const hasRealExtensionRuntime = Boolean(typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getManifest === 'function');
+    if (autoCheck && hasRealExtensionRuntime) {
+      const cached = res && res.github_update_cache;
+      const localVer = getLocalVersion();
+      if (cached && cached.remoteVersion && (Date.now() - (cached.checkedAt || 0) < 1800000)) {
+        const hasUpdate = compareVersions(cached.remoteVersion, localVer) > 0;
+        if (hasUpdate && res.dismissed_update_version !== cached.remoteVersion) {
+          renderGithubUpdateBanner({ ...cached, localVersion: localVer, hasUpdate: true });
+        }
+      } else {
+        setTimeout(() => checkForGithubUpdate(false), 1200);
+      }
+    }
+  });
 
 });
