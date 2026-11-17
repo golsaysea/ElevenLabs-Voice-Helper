@@ -83,10 +83,11 @@
       <div class="control-group">
         <label>Model (选择模型)</label>
         <select id="modelSelect">
-          <option value="eleven_multilingual_v2" selected>Multilingual v2</option>
+          <option value="eleven_v3">Eleven v3 (支持 [...] 情绪/唱歌标签)</option>
+          <option value="eleven_v4">Eleven v4 (高质量 / 支持 [...] 标签)</option>
+          <option value="eleven_multilingual_v2" selected>Multilingual v2 (经典朗读)</option>
           <option value="eleven_turbo_v2_5">Turbo v2.5</option>
           <option value="eleven_flash_v2_5">Flash v2.5</option>
-          <option value="eleven_v3">Eleven v3 (Alpha)</option>
         </select>
       </div>
 
@@ -103,7 +104,15 @@
       <div class="divider"></div>
 
       <div class="sliders-area">
-        <div class="slider-item">
+        <div class="control-group" id="v3-stability-control" style="display:none; margin-bottom:8px;">
+          <label for="v3Stability">V3 Stability (表现力模式)</label>
+          <select id="v3Stability">
+            <option value="0">Creative (0.0) - 歌唱/丰富情感 (推荐标签用)</option>
+            <option value="0.5" selected>Natural (0.5) - 平衡自然</option>
+            <option value="1">Robust (1.0) - 稳定一致</option>
+          </select>
+        </div>
+        <div class="slider-item" id="stability-control">
           <div class="lbl"><span>Stability</span> <span class="val-tag" id="valStab">0.50</span></div>
           <input type="range" id="stability" min="0" max="1" step="0.01" value="0.5">
         </div>

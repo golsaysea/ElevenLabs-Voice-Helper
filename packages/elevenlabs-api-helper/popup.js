@@ -37,6 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 侧边栏 - 参数
     stab: getEl('stability'),
+    v3Stab: getEl('v3Stability'),
+    v3Area: getEl('v3-stability-control'),
+    stabilityArea: getEl('stability-control'),
     sim: getEl('similarity'),
     style: getEl('style'),
     boost: getEl('speakerBoost'),
@@ -762,8 +765,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       // 显示正在使用的格式
+      const allBatchTexts = cards.map(c => c.querySelector('textarea') ? c.querySelector('textarea').value.trim() : '').join('\n');
+      if (textHasBracketAudioTag(allBatchTexts) && TAG_UNSUPPORTED_V2_MODELS.has(ui.model.value)) {
+        ensureTagCompatibleModel(allBatchTexts);
+      }
       ui.genBtn.textContent = `生成中 (${fileExt.toUpperCase()})...`;
-      setStatus(`🚀 开始批量生成 (格式: ${fileExt.toUpperCase()})`);
+      setStatus(`🚀 开始批量生成 (模型: ${ui.model.value} · 格式: ${fileExt.toUpperCase()})`);
 
       const cfg = {
         key: state.currentKey,
@@ -771,7 +778,7 @@ document.addEventListener('DOMContentLoaded', () => {
         model: ui.model.value,
         apiFormat: apiFormat,
         fileExt: fileExt,
-        stab: parseFloat(ui.stab.value),
+        stab: ui.model.value === 'eleven_v3' && ui.v3Stab ? parseFloat(ui.v3Stab.value) : parseFloat(ui.stab.value),
         sim: parseFloat(ui.sim.value),
         style: parseFloat(ui.style.value),
         boost: ui.boost.checked,
@@ -856,8 +863,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 单次调用 API 的函数
   async function generate(text, cfg, index) {
+    const isTagged = textHasBracketAudioTag(text);
+    const isSinging = /\[[^\]]*\b(sing|singing|gospel|melodic|vibrato|sustained notes)\b/i.test(text);
     const buildSettings = (modelId) => {
       if (modelId === 'eleven_v3') {
+        if (isSinging && ui.v3Stab && Number(ui.v3Stab.value) === 0) return { stability: 0 };
+        if (isSinging && Number(cfg.stab) <= 0.5) return { stability: 0 };
         const s = Number(cfg.stab);
         return { stability: s <= 0.35 ? 0 : (s >= 0.75 ? 1 : 0.5) };
       }
@@ -870,7 +881,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${cfg.voice}?output_format=${cfg.apiFormat}`;
-    const candidateModels = [...new Set([cfg.model, 'eleven_multilingual_v2', 'eleven_flash_v2_5', 'eleven_turbo_v2_5'])];
+    const preferredModel = (isTagged && TAG_UNSUPPORTED_V2_MODELS.has(cfg.model)) ? 'eleven_v3' : cfg.model;
+    const candidateModels = isTagged
+      ? [...new Set([preferredModel, 'eleven_v3', 'eleven_v4', 'eleven_multilingual_v2'])]
+      : [...new Set([cfg.model, 'eleven_multilingual_v2', 'eleven_flash_v2_5', 'eleven_turbo_v2_5'])];
     const activeEffects = buildAudioEffectsPayload();
     let resp = null;
     for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
@@ -1101,31 +1115,48 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderModels(models, savedModelId) {
-    if (!models || models.length === 0) return;
     if (!ui.model) return;
+    const prevSelected = savedModelId || ui.model.value || 'eleven_multilingual_v2';
+    const builtinModels = [
+      { model_id: 'eleven_v3', name: 'Eleven v3 (支持 [...] 情绪/唱歌标签)' },
+      { model_id: 'eleven_v4', name: 'Eleven v4 (高质量 / 支持 [...] 标签)' },
+      { model_id: 'eleven_multilingual_v2', name: 'Multilingual v2 (经典朗读)' },
+      { model_id: 'eleven_turbo_v2_5', name: 'Turbo v2.5 (极速)' },
+      { model_id: 'eleven_flash_v2_5', name: 'Flash v2.5 (快速)' }
+    ];
+    const byId = new Map(builtinModels.map(m => [m.model_id, { ...m }]));
+    if (Array.isArray(models)) {
+      models.forEach(m => {
+        if (!m || !m.model_id || m.can_do_text_to_speech === false) return;
+        byId.set(m.model_id, { ...byId.get(m.model_id), ...m });
+      });
+    }
+    const mergedModels = Array.from(byId.values());
     ui.model.innerHTML = '';
     
     const groupMain = document.createElement('optgroup'); groupMain.label = "🔥 核心模型";
     const groupOther = document.createElement('optgroup'); groupOther.label = "🧊 其他模型";
     
-    const mainIds = ['eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5', 'eleven_v3'];
+    const mainIds = ['eleven_v3', 'eleven_v4', 'eleven_multilingual_v2', 'eleven_turbo_v2_5', 'eleven_flash_v2_5'];
     
-    models.sort((a, b) => {
+    mergedModels.sort((a, b) => {
       let idxA = mainIds.indexOf(a.model_id);
       let idxB = mainIds.indexOf(b.model_id);
       if (idxA !== -1 && idxB !== -1) return idxA - idxB;
       if (idxA !== -1) return -1;
       if (idxB !== -1) return 1;
-      return a.name.localeCompare(b.name);
+      return String(a.name || a.model_id).localeCompare(String(b.name || b.model_id));
     });
 
-    models.forEach(m => {
+    mergedModels.forEach(m => {
       const opt = document.createElement('option');
       opt.value = m.model_id;
       let name = m.name;
-      if (m.model_id === 'eleven_multilingual_v2') name = 'Multilingual v2 (推荐/情感)';
+      if (m.model_id === 'eleven_v3') name = 'Eleven v3 (推荐·支持 [...] 情绪/唱歌标签)';
+      if (m.model_id === 'eleven_v4') name = 'Eleven v4 (高质量·支持 [...] 标签)';
+      if (m.model_id === 'eleven_multilingual_v2') name = 'Multilingual v2 (经典朗读)';
       if (m.model_id === 'eleven_turbo_v2_5') name = 'Turbo v2.5 (极速)';
-      if (m.model_id === 'eleven_v3') name = 'Eleven v3 (最新 Alpha)';
+      if (m.model_id === 'eleven_flash_v2_5') name = 'Flash v2.5 (快速)';
       opt.textContent = name;
       
       if (mainIds.includes(m.model_id)) groupMain.appendChild(opt);
@@ -1134,7 +1165,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     ui.model.appendChild(groupMain);
     ui.model.appendChild(groupOther);
-    if (savedModelId) ui.model.value = savedModelId;
+    if (prevSelected && Array.from(ui.model.options).some(o => o.value === prevSelected)) {
+      ui.model.value = prevSelected;
+    }
     updateModelUI();
   }
 
@@ -1481,7 +1514,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // UI 参数变动监听
   if (ui.model) ui.model.addEventListener('change', () => { chrome.storage.local.set({ 'xi_model': ui.model.value }); updateModelUI(); });
-  function updateModelUI() { const m = ui.model.value; const isV2 = m === 'eleven_multilingual_v2'; ui.v2Area.style.display = isV2 ? 'block' : 'none'; }
+  if (ui.v3Stab) ui.v3Stab.addEventListener('change', () => { chrome.storage.local.set({ 'xi_v3_stability': ui.v3Stab.value }); });
+  function updateModelUI() {
+    const m = ui.model ? ui.model.value : 'eleven_multilingual_v2';
+    const isV2 = m === 'eleven_multilingual_v2';
+    const isV3 = m === 'eleven_v3';
+    if (ui.v3Area) ui.v3Area.style.display = isV3 ? 'block' : 'none';
+    if (ui.stabilityArea) ui.stabilityArea.style.display = isV3 ? 'none' : 'block';
+    if (ui.v2Area) ui.v2Area.style.display = isV2 ? 'block' : 'none';
+  }
   
   if (ui.stab) ui.stab.addEventListener('input', (e) => updateVal('stab', e.target.value));
   if (ui.sim) ui.sim.addEventListener('input', (e) => updateVal('sim', e.target.value));
@@ -1875,8 +1916,12 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const modelId = ui.model ? ui.model.value : 'eleven_multilingual_v2';
-    const stab = ui.stab ? parseFloat(ui.stab.value) : 0.5;
+    const isTagged = textHasBracketAudioTag(firstSentence);
+    if (isTagged && ui.model && TAG_UNSUPPORTED_V2_MODELS.has(ui.model.value)) {
+      ensureTagCompatibleModel(firstSentence);
+    }
+    const modelId = ui.model ? ui.model.value : (isTagged ? 'eleven_v3' : 'eleven_multilingual_v2');
+    const stab = (modelId === 'eleven_v3' && ui.v3Stab) ? parseFloat(ui.v3Stab.value) : (ui.stab ? parseFloat(ui.stab.value) : 0.5);
     const sim = ui.sim ? parseFloat(ui.sim.value) : 0.75;
     const style = ui.style ? parseFloat(ui.style.value) : 0;
     const boost = ui.boost ? ui.boost.checked : true;
@@ -1887,44 +1932,59 @@ document.addEventListener('DOMContentLoaded', () => {
     previewBtn.disabled = true;
     previewBtn.textContent = '⏳ 合成首句...';
     const shortPreview = firstSentence.length > 24 ? `${firstSentence.slice(0, 24)}...` : firstSentence;
-    setStatus(`🔊 正在合成首句 (${firstSentence.length}字): "${shortPreview}"`);
+    setStatus(`🔊 正在合成首句 (${modelId} · ${firstSentence.length}字): "${shortPreview}"`);
 
     try {
       let blob = card.previewCache && card.previewCache.key === cacheKey ? card.previewCache.blob : null;
       if (!blob) {
-        const settings = { stability: stab, similarity_boost: sim };
-        if (modelId === 'eleven_multilingual_v2') {
-          settings.style = style;
-          settings.use_speaker_boost = boost;
-        }
-        const url = `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}?output_format=mp3_44100_128`;
-        const reqBody = {
-          text: firstSentence,
-          model_id: modelId,
-          voice_settings: settings
+        const isSinging = /\[[^\]]*\b(sing|singing|gospel|melodic|vibrato|sustained notes)\b/i.test(firstSentence);
+        const buildPreviewSettings = (targetModel) => {
+          if (targetModel === 'eleven_v3') {
+            if (isSinging && stab <= 0.5) return { stability: 0 };
+            return { stability: stab <= 0.35 ? 0 : (stab >= 0.75 ? 1 : 0.5) };
+          }
+          const s = { stability: stab, similarity_boost: sim };
+          if (targetModel === 'eleven_multilingual_v2') {
+            s.style = style;
+            s.use_speaker_boost = boost;
+          }
+          return s;
         };
-        if (activeEffects && Object.keys(activeEffects).length > 0) {
-          reqBody.audio_effects = activeEffects;
-        }
-        let resp = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'xi-api-key': state.currentKey,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(reqBody)
-        });
-        if (!resp.ok && reqBody.audio_effects && [400, 404, 422].includes(resp.status)) {
-          const fallbackBody = { ...reqBody };
-          delete fallbackBody.audio_effects;
+        const url = `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}?output_format=mp3_44100_128`;
+        const previewCandidates = isTagged
+          ? [...new Set([modelId, 'eleven_v3', 'eleven_v4'])]
+          : [modelId];
+        let resp = null;
+        for (const candidateModel of previewCandidates) {
+          const reqBody = {
+            text: firstSentence,
+            model_id: candidateModel,
+            voice_settings: buildPreviewSettings(candidateModel)
+          };
+          if (activeEffects && Object.keys(activeEffects).length > 0) {
+            reqBody.audio_effects = activeEffects;
+          }
           resp = await fetch(url, {
             method: 'POST',
             headers: {
               'xi-api-key': state.currentKey,
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify(fallbackBody)
+            body: JSON.stringify(reqBody)
           });
+          if (!resp.ok && reqBody.audio_effects && [400, 404, 422].includes(resp.status)) {
+            const fallbackBody = { ...reqBody };
+            delete fallbackBody.audio_effects;
+            resp = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'xi-api-key': state.currentKey,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(fallbackBody)
+            });
+          }
+          if (resp.ok || resp.status === 401 || resp.status === 429) break;
         }
         if (!resp.ok) {
           throw new Error(await readElevenError(resp, '试听失败'));
@@ -3385,9 +3445,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 🔄 GitHub 自动检查更新与提示下载
   const GITHUB_REPO = 'golsaysea/ElevenLabs-Batch-TTS-Pro';
-  const CURRENT_EXT_VERSION = '6.8.0';
+  const CURRENT_EXT_VERSION = '6.8.1';
   const REMOTE_MANIFEST_PATH = 'packages/elevenlabs-batch-standard/manifest.json';
-  const DEFAULT_ZIP_NAME = 'elevenlabs-batch-standard-v6.8.0.zip';
+  const DEFAULT_ZIP_NAME = 'elevenlabs-batch-standard-v6.8.1.zip';
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const githubUpdateBanner = document.getElementById('githubUpdateBanner');
   const githubUpdateText = document.getElementById('githubUpdateText');
@@ -3687,6 +3747,44 @@ document.addEventListener('DOMContentLoaded', () => {
     return segs.map(s => prependTagToText(s, tag));
   }
 
+  const TAG_UNSUPPORTED_V2_MODELS = new Set([
+    'eleven_multilingual_v2',
+    'eleven_flash_v2_5',
+    'eleven_flash_v2',
+    'eleven_turbo_v2_5',
+    'eleven_turbo_v2',
+    'eleven_monolingual_v1',
+    'eleven_multilingual_v1'
+  ]);
+
+  function textHasBracketAudioTag(text) {
+    return /\[\s*[A-Za-z\u4e00-\u9fa5][^\]]{1,300}\]/.test(String(text || ''));
+  }
+
+  function ensureTagCompatibleModel(sampleText = '') {
+    if (!ui.model) return false;
+    const isSinging = /\[[^\]]*\b(sing|singing|gospel|melodic|vibrato|sustained notes)\b/i.test(String(sampleText || ''));
+    let switched = false;
+    if (TAG_UNSUPPORTED_V2_MODELS.has(ui.model.value)) {
+      const targetModel = 'eleven_v3';
+      if (!Array.from(ui.model.options || []).some(o => o.value === targetModel)) {
+        const opt = document.createElement('option');
+        opt.value = targetModel;
+        opt.textContent = 'Eleven v3 (推荐·支持 [...] 情绪/唱歌标签)';
+        ui.model.insertBefore(opt, ui.model.firstChild);
+      }
+      ui.model.value = targetModel;
+      chrome.storage.local.set({ xi_model: targetModel });
+      switched = true;
+    }
+    if (ui.model.value === 'eleven_v3' && isSinging && ui.v3Stab && ui.v3Stab.value !== '0') {
+      ui.v3Stab.value = '0';
+      chrome.storage.local.set({ xi_v3_stability: '0' });
+    }
+    if (switched) updateModelUI();
+    return switched;
+  }
+
   function applyPrefixTagToAllCards() {
     const rawInput = (prefixTagInput && prefixTagInput.value.trim()) || (prefixTagPresetSelect && prefixTagPresetSelect.value.trim()) || '';
     const normalizedTag = normalizeBracketTag(rawInput);
@@ -3699,6 +3797,7 @@ document.addEventListener('DOMContentLoaded', () => {
       prefixTagInput.value = normalizedTag;
     }
     savePrefixTagSettings();
+    const autoSwitched = ensureTagCompatibleModel(normalizedTag);
 
     const cards = Array.from(ui.container ? ui.container.querySelectorAll('.card') : []);
     const validCards = cards.filter(c => {
@@ -3714,7 +3813,7 @@ document.addEventListener('DOMContentLoaded', () => {
           cards[0].previewCache = null;
           saveCards();
           updateStats();
-          setStatus(`🏷️ 已在空卡片开头填入标签：${normalizedTag.slice(0, 36)}${normalizedTag.length > 36 ? '...' : ''}`);
+          setStatus(`🏷️ 已在空卡片开头填入标签${autoSwitched ? '（已自动切换为 Eleven v3 模型以支持标签）' : ''}`);
           return 1;
         }
       }
@@ -3737,7 +3836,7 @@ document.addEventListener('DOMContentLoaded', () => {
     saveCards();
     updateStats();
     const shortTag = normalizedTag.length > 42 ? `${normalizedTag.slice(0, 42)}...]` : normalizedTag;
-    setStatus(`🏷️ 已批量在 ${ validCards.length } 段文案开头应用标签：${shortTag}`);
+    setStatus(`🏷️ 已批量在 ${validCards.length} 段文案开头应用标签：${shortTag}${autoSwitched ? '（已自动切换至 Eleven v3 模型）' : ''}`);
     return updatedCount;
   }
 
@@ -3894,10 +3993,11 @@ document.addEventListener('DOMContentLoaded', () => {
     saveTagUndoSnapshot();
     const styleMode = autoTagStyleSelect ? autoTagStyleSelect.value : 'auto';
     ta.value = autoAddTagsToText(ta.value, styleMode);
+    const autoSwitched = ensureTagCompatibleModel(ta.value);
     card.previewCache = null;
     saveCards();
     updateStats();
-    setStatus('🎭 已为当前段落智能添加表现力标签（可点击「↩️ 撤销标签操作」还原）');
+    setStatus(`🎭 已为当前段落智能添加表现力标签${autoSwitched ? '（已自动切换至 Eleven v3 模型）' : '（可点击「↩️ 撤销标签操作」还原）'}`);
   }
 
   function autoAddTagsToAllCards() {
@@ -3917,6 +4017,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const autoPrependChecked = Boolean(autoPrependTagToggle && autoPrependTagToggle.checked && userPrefixRaw);
 
     let count = 0;
+    let combinedSample = '';
     validCards.forEach(c => {
       const ta = c.querySelector('textarea');
       let nextText = ta.value;
@@ -3924,6 +4025,7 @@ document.addEventListener('DOMContentLoaded', () => {
         nextText = prependTagToText(nextText, userPrefixRaw);
       }
       nextText = autoAddTagsToText(nextText, styleMode);
+      combinedSample += '\n' + nextText;
       if (nextText !== ta.value) {
         ta.value = nextText;
         c.previewCache = null;
@@ -3931,10 +4033,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
+    const autoSwitched = ensureTagCompatibleModel(combinedSample);
     savePrefixTagSettings();
     saveCards();
     updateStats();
-    setStatus(`🎭 已为 ${validCards.length} 段文案智能添加表现力标签（如不满意可点「↩️ 撤销标签操作」）`);
+    setStatus(`🎭 已为 ${validCards.length} 段文案智能添加表现力标签${autoSwitched ? '（已自动切换至 Eleven v3 模型以生效 [...] 标签）' : ''}`);
     return count;
   }
 

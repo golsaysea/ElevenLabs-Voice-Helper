@@ -2676,9 +2676,9 @@ function initVoiceCleanup() {
 // 🎛️ ElevenLabs 音频效果 (Audio Effects) 与 🔄 GitHub 自动检查更新
 // ==========================================
 const HELPER_GITHUB_REPO = 'golsaysea/ElevenLabs-Voice-Helper';
-const HELPER_EXT_VERSION = '3.5.0';
+const HELPER_EXT_VERSION = '3.5.1';
 const HELPER_MANIFEST_PATH = 'packages/elevenlabs-token-helper/manifest.json';
-const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.0.zip';
+const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.1.zip';
 
 function buildAudioEffectsPayload() {
   const envId = DOM.audioEffectEnv && DOM.audioEffectEnv.value ? String(DOM.audioEffectEnv.value).trim() : '';
@@ -3077,6 +3077,31 @@ function maybeAutoPrependTagToSegments(segs) {
   return segs.map(s => prependTagToText(s, tag));
 }
 
+const HELPER_TAG_UNSUPPORTED_V2_MODELS = new Set([
+  'eleven_multilingual_v2',
+  'eleven_flash_v2_5',
+  'eleven_flash_v2',
+  'eleven_turbo_v2_5',
+  'eleven_turbo_v2'
+]);
+
+function ensureHelperTagCompatibleModel(sampleText = '') {
+  if (!DOM.modelSelect) return false;
+  const isSinging = /\[[^\]]*\b(sing|singing|gospel|melodic|vibrato|sustained notes)\b/i.test(String(sampleText || ''));
+  let switched = false;
+  if (HELPER_TAG_UNSUPPORTED_V2_MODELS.has(DOM.modelSelect.value)) {
+    DOM.modelSelect.value = 'eleven_v3';
+    switched = true;
+  }
+  if (isSinging && DOM.v3StabilitySelect) {
+    DOM.v3StabilitySelect.value = '0.30';
+  }
+  if (switched || isSinging) {
+    saveGenerationSettingsFromUI();
+  }
+  return switched;
+}
+
 function applyPrefixTagToAllCards() {
   const rawInput = (DOM.prefixTagInput && DOM.prefixTagInput.value.trim()) || (DOM.prefixTagPresetSelect && DOM.prefixTagPresetSelect.value.trim()) || '';
   const normalizedTag = normalizeBracketTag(rawInput);
@@ -3088,6 +3113,7 @@ function applyPrefixTagToAllCards() {
     DOM.prefixTagInput.value = normalizedTag;
   }
   savePrefixTagSettings();
+  const autoSwitched = ensureHelperTagCompatibleModel(normalizedTag);
 
   const cards = Array.from(DOM.listContainer.children || []);
   const validCards = cards.filter(c => c.textarea && c.textarea.value.trim().length > 0);
@@ -3117,7 +3143,7 @@ function applyPrefixTagToAllCards() {
 
   updateStats();
   const shortTag = normalizedTag.length > 42 ? `${normalizedTag.slice(0, 42)}...]` : normalizedTag;
-  showStatus(`🏷️ 已批量在 ${validCards.length} 段文案开头应用标签：${shortTag}`);
+  showStatus(`🏷️ 已批量在 ${validCards.length} 段文案开头应用标签：${shortTag}${autoSwitched ? '（已自动切换为 Eleven v3 模型）' : ''}`);
   return updatedCount;
 }
 
@@ -3266,9 +3292,10 @@ function autoTagSingleCard(card) {
   saveTagUndoSnapshot();
   const styleMode = DOM.autoTagStyleSelect && DOM.autoTagStyleSelect.value ? DOM.autoTagStyleSelect.value : 'auto';
   card.textarea.value = autoAddTagsToText(card.textarea.value, styleMode);
+  const autoSwitched = ensureHelperTagCompatibleModel(card.textarea.value);
   card.previewCache = null;
   updateStats();
-  showStatus('🎭 已为当前段落智能添加表现力标签（可点击「↩️ 撤销标签操作」还原）');
+  showStatus(`🎭 已为当前段落智能添加表现力标签${autoSwitched ? '（已自动切换为 Eleven v3 模型）' : '（可点击「↩️ 撤销标签操作」还原）'}`);
 }
 
 function autoAddTagsToAllCards() {
@@ -3285,12 +3312,14 @@ function autoAddTagsToAllCards() {
   const autoPrependChecked = Boolean(DOM.autoPrependTagToggle && DOM.autoPrependTagToggle.checked && userPrefixRaw);
 
   let count = 0;
+  let combinedSample = '';
   validCards.forEach(c => {
     let nextText = c.textarea.value;
     if (autoPrependChecked) {
       nextText = prependTagToText(nextText, userPrefixRaw);
     }
     nextText = autoAddTagsToText(nextText, styleMode);
+    combinedSample += '\n' + nextText;
     if (nextText !== c.textarea.value) {
       c.textarea.value = nextText;
       c.previewCache = null;
@@ -3298,9 +3327,10 @@ function autoAddTagsToAllCards() {
     }
   });
 
+  const autoSwitched = ensureHelperTagCompatibleModel(combinedSample);
   savePrefixTagSettings();
   updateStats();
-  showStatus(`🎭 已为 ${validCards.length} 段文案智能添加表现力标签（如不满意可点「↩️ 撤销标签操作」）`);
+  showStatus(`🎭 已为 ${validCards.length} 段文案智能添加表现力标签${autoSwitched ? '（已自动切换为 Eleven v3 模型）' : '（如不满意可点「↩️ 撤销标签操作」）'}`);
   return count;
 }
 

@@ -45,8 +45,8 @@ jobs:
           )
 
           $assets = @(
-            @{ Name = "elevenlabs-token-helper-v3.5.0"; Path = "packages/elevenlabs-token-helper" },
-            @{ Name = "elevenlabs-api-helper-v6.8.0"; Path = "packages/elevenlabs-api-helper" }
+            @{ Name = "elevenlabs-token-helper-v3.5.1"; Path = "packages/elevenlabs-token-helper" },
+            @{ Name = "elevenlabs-api-helper-v6.8.1"; Path = "packages/elevenlabs-api-helper" }
           )
 
           foreach ($asset in $assets) {
@@ -95,9 +95,9 @@ jobs:
             }
             packages = @(
               [ordered]@{
-                name = "elevenlabs-token-helper-v3.5.0"
+                name = "elevenlabs-token-helper-v3.5.1"
                 SPDXID = "SPDXRef-Package-1"
-                versionInfo = "v3.5.0"
+                versionInfo = "v3.5.1"
                 downloadLocation = "https://github.com/$env:GITHUB_REPOSITORY"
                 filesAnalyzed = $false
                 licenseConcluded = "GPL-3.0-only"
@@ -105,9 +105,9 @@ jobs:
                 copyrightText = "NOASSERTION"
               },
               [ordered]@{
-                name = "elevenlabs-api-helper-v6.8.0"
+                name = "elevenlabs-api-helper-v6.8.1"
                 SPDXID = "SPDXRef-Package-2"
-                versionInfo = "v3.5.0"
+                versionInfo = "v3.5.1"
                 downloadLocation = "https://github.com/$env:GITHUB_REPOSITORY"
                 filesAnalyzed = $false
                 licenseConcluded = "GPL-3.0-only"
