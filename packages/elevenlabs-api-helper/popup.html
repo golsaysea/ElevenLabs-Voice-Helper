@@ -593,10 +593,11 @@
           <input type="text" id="voiceSyncTargetName" class="voice-cleanup-search" placeholder="例如：美国南部小女孩深情唱歌 / 白人青年唱歌 / Marcus">
         </div>
         <div class="tool-field">
-          <label for="voiceSyncModeSelect">2. 同步方式（免费版账号推荐使用默认的「智能自动兼容」或「免费版声音设计」）</label>
+          <label for="voiceSyncModeSelect">2. 同步方式（免费版推荐使用默认的「智能自动兼容」或「免费版极速改名合并」）</label>
           <select id="voiceSyncModeSelect">
-            <option value="auto" selected>🤖 智能自动兼容（免费号自动用 Voice Design 创建同名音色 · 付费号优先样本克隆/共享库）</option>
-            <option value="design">🎨 免费版兼容 · 声音设计同步 (Voice Design API，所有免费/付费账号通用)</option>
+            <option value="auto" selected>🤖 智能自动兼容（有余量自动用 Voice Design 创建 · 0积分/满槽位自动将现有自定义音色改名合并）</option>
+            <option value="rename">🏷️ 免费版极速改名合并（0积分 · 将各账号现有自定义音色直接统一改名合并，秒级完成）</option>
+            <option value="design">🎨 免费版声音设计新建 (Voice Design API，为各账号新生成一个同风格同名音色)</option>
             <option value="clone">🧬 仅原声样本克隆 (Instant Voice Cloning API，仅限 Starter 及以上付费账号)</option>
           </select>
         </div>
@@ -613,9 +614,9 @@
           </div>
         </div>
         <div class="tool-options-row" style="padding:6px 10px;">
-          <label class="tool-check" title="免费账号最多允许 3 个自定义声音；勾选后若某个账号已满 3 个槽位，会自动删除该账号上 1 个非当前名称的旧自定义声音以腾出空间">
-            <input type="checkbox" id="voiceSyncAutoReplaceSlot" checked>
-            <span>♻️ 若目标账号音色槽位已满（免费号限 3 个），自动替换 1 个旧自定义音色</span>
+          <label class="tool-check" title="默认不勾选，优先改名合并或安全保留原音色；仅当明确需要删除旧音色以新建 Voice Design 时才勾选">
+            <input type="checkbox" id="voiceSyncAutoReplaceSlot">
+            <span>♻️ 若目标账号音色槽位已满（免费号限 3 个）且强制新建时，允许替换 1 个旧自定义音色（默认关闭，安全保留原音色）</span>
           </label>
         </div>
         <div id="voiceSyncAccountList" class="voice-cleanup-list" style="max-height:185px;"></div>

@@ -1,71 +1,111 @@
-// 1. 获取注入的插件 ID
-const extensionID = document.getElementById('elevenlabs')?.outerText;
-if (!extensionID) console.error("ElevenLabs 插件 ID 获取失败");
+// 1. 获取注入的插件 ID（content script 未提前插入节点时仍可通过 window.postMessage 中继）
+;(() => {
+  if (window.__elevenTokenInterceptorInstalled) return;
+  window.__elevenTokenInterceptorInstalled = true;
 
-// 2. 后台通信封装
-const sendBackground = data => {
-  if (extensionID) chrome.runtime.sendMessage(extensionID, data).catch(() => {});
-};
+  const getExtensionID = () => {
+    const el = document.getElementById('elevenlabs');
+    const raw = (el && (el.textContent || el.outerText)) || '';
+    return String(raw).trim();
+  };
 
-// 告诉后台拦截器已经准备就绪 (可选显示一个沙漏或不显示)
-sendBackground({ action: 'mark', text: '⏳' }); 
-
-// 3. 备份原生 fetch
-const originalFetch = window.fetch;
-
-// 4. 网页登录授权捕获逻辑
-window.fetch = async (url, options) => {
-  const urlStr = typeof url === 'string' ? url : (url?.url || '');
-
-  // 【策略 A】：读取向 ElevenLabs 发送的 Authorization 请求头
-  if (urlStr.includes('elevenlabs.io') && options?.headers) {
+  const sendBackground = (data) => {
     try {
-      let token = null;
-      const h = options.headers;
-      
-      // 处理 Headers 对象
-      if (h instanceof Headers) {
-        token = h.get('authorization');
-      } 
-      // 处理普通 JSON 对象
-      else {
-        const authKey = Object.keys(h).find(k => k.toLowerCase() === 'authorization');
-        if (authKey) token = h[authKey];
-      }
+      window.postMessage({ source: 'elevenlabs-token-helper-msg', payload: data }, '*');
+    } catch (_) {}
+    const extensionID = getExtensionID();
+    if (extensionID && typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      try {
+        chrome.runtime.sendMessage(extensionID, data).catch(() => {});
+      } catch (_) {}
+    }
+  };
 
-      if (token) {
-        token = token.replace(/Bearer /i, '').trim();
-        // 简单验证 token 长度，防止抓到空值
-        if (token.length > 20) {
-          sendBackground({ action: 'token', token });
-          sendBackground({ action: 'mark', text: '存' });
+  const emitToken = (rawToken) => {
+    const token = String(rawToken || '').replace(/^Bearer\s+/i, '').trim();
+    if (token.length > 20) {
+      sendBackground({ action: 'token', token });
+      sendBackground({ action: 'mark', text: '存' });
+    }
+  };
+
+  const extractAuthHeader = (headers) => {
+    if (!headers) return '';
+    try {
+      if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+        return headers.get('authorization') || headers.get('Authorization') || '';
+      }
+      if (Array.isArray(headers)) {
+        const pair = headers.find((item) => Array.isArray(item) && String(item[0] || '').toLowerCase() === 'authorization');
+        return pair ? String(pair[1] || '') : '';
+      }
+      if (typeof headers === 'object') {
+        const authKey = Object.keys(headers).find((k) => k.toLowerCase() === 'authorization');
+        return authKey ? String(headers[authKey] || '') : '';
+      }
+    } catch (_) {}
+    return '';
+  };
+
+  sendBackground({ action: 'mark', text: '⏳' });
+
+  // 2. 拦截原生 fetch（同时兼容 fetch(url, options) 和 fetch(new Request(...))）
+  const originalFetch = window.fetch;
+  if (typeof originalFetch === 'function') {
+    window.fetch = async function patchedFetch(url, options) {
+      let urlStr = '';
+      try {
+        urlStr = typeof url === 'string' ? url : (url && url.url ? String(url.url) : String(url || ''));
+      } catch (_) {}
+
+      if (urlStr.includes('elevenlabs.io')) {
+        try {
+          let tokenHeader = extractAuthHeader(options && options.headers);
+          if (!tokenHeader && url && typeof url === 'object' && 'headers' in url) {
+            tokenHeader = extractAuthHeader(url.headers);
+          }
+          if (tokenHeader) emitToken(tokenHeader);
+        } catch (e) {
+          console.warn('请求头解析失败', e);
         }
       }
-    } catch (e) {
-      console.warn("请求头解析失败", e);
-    }
-  }
 
-  // 正常放行请求，但我们要捕获它的 Response (返回值)
-  const response = await originalFetch(url, options);
+      const response = await originalFetch.apply(this, arguments);
 
-  // 【策略 B】：读取 Google Firebase / 鉴权接口返回的登录 token
-  if (urlStr.includes('identitytoolkit.googleapis.com') || urlStr.includes('securetoken.googleapis.com')) {
-    try {
-      // 必须 clone 一份，否则网页本身的解析会报错
-      const clone = response.clone();
-      const data = await clone.json();
-      
-      // 从返回值中直接提取最新生成的 token
-      const token = data.idToken || data.access_token;
-      if (token) {
-        sendBackground({ action: 'token', token });
-        sendBackground({ action: 'mark', text: '存' });
+      // 【策略 B】：读取 Google Firebase / 鉴权接口返回的登录 token
+      if (urlStr.includes('identitytoolkit.googleapis.com') || urlStr.includes('securetoken.googleapis.com')) {
+        try {
+          const clone = response.clone();
+          const data = await clone.json();
+          const token = data && (data.idToken || data.access_token || data.id_token);
+          if (token) emitToken(token);
+        } catch (_) {}
       }
-    } catch (e) {
-      // 忽略非 JSON 响应的错误
-    }
+
+      return response;
+    };
   }
 
-  return response;
-};
+  // 3. 拦截 XMLHttpRequest Authorization 请求头（兼容上传/音频等 XHR 请求）
+  if (typeof XMLHttpRequest !== 'undefined' && XMLHttpRequest.prototype) {
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open = function patchedOpen(method, url) {
+      try {
+        this.__elevenUrl = typeof url === 'string' ? url : String(url || '');
+      } catch (_) {}
+      return origOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.setRequestHeader = function patchedSetHeader(name, value) {
+      try {
+        if (
+          String(name || '').toLowerCase() === 'authorization' &&
+          (!this.__elevenUrl || this.__elevenUrl.includes('elevenlabs.io') || this.__elevenUrl.startsWith('/'))
+        ) {
+          emitToken(value);
+        }
+      } catch (_) {}
+      return origSetHeader.apply(this, arguments);
+    };
+  }
+})();

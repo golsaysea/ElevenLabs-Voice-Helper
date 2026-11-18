@@ -40,6 +40,14 @@
             <div class="account-quota" id="userQuota">获取额度中...</div>
           </div>
         </div>
+        <div class="token-helper-actions">
+          <button type="button" id="extractPageTokenBtn" class="btn-token-mini" title="从已打开的 ElevenLabs 网页立即提取/刷新当前登录 Token">🔍 提取网页 Token</button>
+          <button type="button" id="toggleManualTokenBtn" class="btn-token-mini" title="也可手动粘贴从 F12 Network 复制的 Bearer Token">📋 粘贴 Token</button>
+        </div>
+        <div id="manualTokenBox" class="manual-token-box hidden">
+          <input type="text" id="manualTokenInput" placeholder="粘贴 eyJ... 或 Bearer eyJ..." autocomplete="off">
+          <button type="button" id="saveManualTokenBtn" class="btn-token-apply">确认</button>
+        </div>
       </div>
 
       <div class="quick-tools" style="margin-top: 20px;">

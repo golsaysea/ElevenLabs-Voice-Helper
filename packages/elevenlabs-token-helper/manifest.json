@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Eleven V3 Batch Pro",
-  "version": "3.5.2",
-  "description": "基于网页登录 Token 授权的 ElevenLabs 批量生成工坊（支持批量开头标签、智能自动加标签自动匹配 V3/V4 模型、音频效果与 GitHub 自动更新提示）",
+  "version": "3.5.3",
+  "description": "基于网页登录 Token 授权的 ElevenLabs 批量生成工坊（增强 webRequest + IndexedDB + Request 对象全兼容自动抓包、批量开头标签、智能自动加标签、音频效果与 GitHub 自动更新）",
   "icons": {
     "16": "icon.png",
     "48": "icon.png",
@@ -13,12 +13,16 @@
   },
   "permissions": [
     "storage",
-    "downloads"
+    "downloads",
+    "webRequest",
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "https://elevenlabs.io/*",
     "https://*.elevenlabs.io/*",
-    "https://api.us.elevenlabs.io/*"
+    "https://api.us.elevenlabs.io/*",
+    "https://api.elevenlabs.io/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -26,8 +30,16 @@
   "content_scripts": [
     {
       "matches": ["https://elevenlabs.io/*", "https://*.elevenlabs.io/*"],
+      "js": ["injectFetch.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://elevenlabs.io/*", "https://*.elevenlabs.io/*"],
       "js": ["extID.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [

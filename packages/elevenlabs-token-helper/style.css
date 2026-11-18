@@ -118,6 +118,14 @@ textarea:focus { border-color: var(--primary); outline: none; }
 .btn-danger:hover { background: #b91c1c; }
 .hidden { display: none !important; }
 
+.token-helper-actions { display: flex; gap: 6px; margin-top: 8px; }
+.btn-token-mini { flex: 1; padding: 5px 8px; font-size: 11px; font-weight: 600; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-main); cursor: pointer; transition: 0.2s; white-space: nowrap; }
+.btn-token-mini:hover { border-color: var(--primary); color: var(--primary); }
+.manual-token-box { display: flex; gap: 6px; margin-top: 6px; }
+.manual-token-box input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-main); }
+.btn-token-apply { padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 6px; border: none; background: var(--primary); color: #fff; cursor: pointer; white-space: nowrap; }
+.btn-token-apply:hover { background: var(--primary-hover); }
+
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }

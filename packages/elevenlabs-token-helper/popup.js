@@ -57,6 +57,11 @@ const DOM = {
   currentAliasDisplay: document.getElementById('currentAliasDisplay'),
   userQuota: document.getElementById('userQuota'),
   statusDot: document.getElementById('statusDot'),
+  extractPageTokenBtn: document.getElementById('extractPageTokenBtn'),
+  toggleManualTokenBtn: document.getElementById('toggleManualTokenBtn'),
+  manualTokenBox: document.getElementById('manualTokenBox'),
+  manualTokenInput: document.getElementById('manualTokenInput'),
+  saveManualTokenBtn: document.getElementById('saveManualTokenBtn'),
   voiceSelect: document.getElementById('voiceSelect'),
   refreshVoices: document.getElementById('refreshVoices'),
   cleanVoicesBtn: document.getElementById('cleanVoicesBtn'),
@@ -234,10 +239,65 @@ function initEventListeners() {
 
   DOM.refreshVoices.addEventListener('click', async () => {
     DOM.refreshVoices.disabled = true;
-    showStatus('🔄 正在刷新当前账号...');
+    showStatus('🔄 正在刷新当前账号与 Token...');
+    const curAuth = getActiveAuth();
+    if (!curAuth || isTokenExpired(curAuth.secret)) {
+      await tryExtractTokenFromOpenTabs(false);
+    }
     await refreshActiveAccount();
     setTimeout(() => { DOM.refreshVoices.disabled = false; }, 1000);
   });
+
+  if (DOM.extractPageTokenBtn) {
+    DOM.extractPageTokenBtn.addEventListener('click', async () => {
+      DOM.extractPageTokenBtn.disabled = true;
+      showStatus('🔍 正在扫描已打开的 ElevenLabs 网页提取 Token...');
+      try {
+        const res = await tryExtractTokenFromOpenTabs(true);
+        if (res && res.ok) {
+          await refreshActiveAccount();
+        }
+      } finally {
+        DOM.extractPageTokenBtn.disabled = false;
+      }
+    });
+  }
+
+  if (DOM.toggleManualTokenBtn && DOM.manualTokenBox) {
+    DOM.toggleManualTokenBtn.addEventListener('click', () => {
+      DOM.manualTokenBox.classList.toggle('hidden');
+      if (!DOM.manualTokenBox.classList.contains('hidden') && DOM.manualTokenInput && typeof DOM.manualTokenInput.focus === 'function') {
+        DOM.manualTokenInput.focus();
+      }
+    });
+  }
+
+  const applyManualTokenInput = async () => {
+    const raw = DOM.manualTokenInput ? DOM.manualTokenInput.value : '';
+    const cleaned = normalizeSecret(raw);
+    if (!cleaned || cleaned.length <= 20) {
+      return showStatus('⚠️ 请输入有效的 ElevenLabs Bearer Token（至少 20 个字符）');
+    }
+    appState.latestCapturedToken = cleaned;
+    appState.lastCapturedTokenAt = Date.now();
+    await chrome.storage.local.set({ token: cleaned, lastCapturedTokenAt: appState.lastCapturedTokenAt });
+    if (DOM.manualTokenBox) DOM.manualTokenBox.classList.add('hidden');
+    if (DOM.manualTokenInput) DOM.manualTokenInput.value = '';
+    showStatus('✅ 已应用手动粘贴的 Token，正在同步账号...');
+    await refreshActiveAccount();
+  };
+
+  if (DOM.saveManualTokenBtn) {
+    DOM.saveManualTokenBtn.addEventListener('click', applyManualTokenInput);
+  }
+  if (DOM.manualTokenInput) {
+    DOM.manualTokenInput.addEventListener('keydown', (e) => {
+      if (e && e.key === 'Enter') {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        applyManualTokenInput();
+      }
+    });
+  }
 
   DOM.modelSelect.addEventListener('change', () => {
     syncSettingsPanel();
@@ -496,12 +556,81 @@ async function loadAuthState() {
 
   appState.latestCapturedToken = data.token || '';
   appState.lastCapturedTokenAt = data.lastCapturedTokenAt || null;
+  if (!appState.latestCapturedToken || isTokenExpired(appState.latestCapturedToken)) {
+    await tryExtractTokenFromOpenTabs(false);
+  }
   await refreshActiveAccount();
 }
 
 function normalizeSecret(secret) {
-  const trimmed = String(secret || '').trim();
+  let trimmed = String(secret || '').trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
+  trimmed = trimmed.replace(/^authorization\s*:\s*/i, '').trim();
   return trimmed.replace(/^Bearer\s+/i, '').trim();
+}
+
+function parseJwtExpMs(token) {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length < 2) return 0;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonStr = typeof atob === 'function' ? atob(b64) : '';
+    if (!jsonStr) return 0;
+    const data = JSON.parse(jsonStr);
+    return Number(data && data.exp) ? Number(data.exp) * 1000 : 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function isTokenExpired(token) {
+  const expMs = parseJwtExpMs(token);
+  return Boolean(expMs && expMs <= Date.now() + 5000);
+}
+
+async function tryExtractTokenFromOpenTabs(manual = false) {
+  if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.sendMessage !== 'function') {
+    if (manual) showStatus('⚠️ 当前环境不支持读取浏览器标签页');
+    return { ok: false, tabCount: 0 };
+  }
+  try {
+    const res = await new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action: 'extractTokenFromTabs' }, (reply) => {
+          if (chrome.runtime && chrome.runtime.lastError) resolve({ ok: false, tabCount: 0 });
+          else resolve(reply || { ok: false, tabCount: 0 });
+        });
+      } catch (_) {
+        resolve({ ok: false, tabCount: 0 });
+      }
+    });
+    if (res && res.ok && res.token) {
+      appState.latestCapturedToken = res.token;
+      appState.lastCapturedTokenAt = Date.now();
+      if (manual) showStatus('✅ 已成功从已打开的 ElevenLabs 网页提取到最新 Token！');
+      return res;
+    }
+    const stored = await chrome.storage.local.get(['token', 'lastCapturedTokenAt']);
+    if (stored && stored.token && !isTokenExpired(stored.token)) {
+      appState.latestCapturedToken = stored.token;
+      appState.lastCapturedTokenAt = stored.lastCapturedTokenAt || Date.now();
+      return { ok: true, token: stored.token };
+    }
+    if (manual) {
+      if (!res || !res.tabCount) {
+        showStatus('⚠️ 未找到已打开的 elevenlabs.io 标签页，请先在浏览器打开并登录 ElevenLabs');
+      } else if (res.expiredFound) {
+        showStatus('⚠️ 网页中的登录凭据已过期，请切回 ElevenLabs 网页刷新一下或点击一次播放/生成');
+      } else {
+        showStatus('⚠️ 暂未读取到新 Token，请切回 ElevenLabs 网页刷新或点一次生成按钮');
+      }
+    }
+    return res || { ok: false };
+  } catch (_) {
+    return { ok: false };
+  }
 }
 
 function getActiveAuth() {
@@ -525,25 +654,30 @@ function formatTime(timestamp) {
 }
 
 async function refreshActiveAccount() {
-  const auth = getActiveAuth();
+  let auth = getActiveAuth();
+  if (!auth || isTokenExpired(auth.secret)) {
+    const extracted = await tryExtractTokenFromOpenTabs(false);
+    if (extracted && extracted.ok) auth = getActiveAuth();
+  }
   if (!auth) {
     appState.quotaRemaining = 0;
     DOM.currentAliasDisplay.textContent = '等待自动识别 Token';
     DOM.currentAliasDisplay.style.color = '#ef4444';
     DOM.statusDot.style.background = '#ef4444';
-    DOM.userQuota.textContent = '请打开 ElevenLabs 网页后自动识别';
+    DOM.userQuota.textContent = '请打开 ElevenLabs 网页或点下方「提取网页 Token」';
     DOM.voiceSelect.innerHTML = '<option>等待账号...</option>';
     return;
   }
 
-  DOM.currentAliasDisplay.textContent = `${AUTH_LABEL}: ${auth.name}${auth.temporary ? '（未保存）' : ''}`;
-  DOM.currentAliasDisplay.style.color = '#10b981';
-  DOM.statusDot.style.background = '#10b981';
+  const expired = isTokenExpired(auth.secret);
+  DOM.currentAliasDisplay.textContent = expired ? `${AUTH_LABEL}: 已过期 (请刷新网页)` : `${AUTH_LABEL}: ${auth.name}${auth.temporary ? '（未保存）' : ''}`;
+  DOM.currentAliasDisplay.style.color = expired ? '#f59e0b' : '#10b981';
+  DOM.statusDot.style.background = expired ? '#f59e0b' : '#10b981';
   await fetchQuota(auth);
   await fetchVoices(auth);
 }
 
-async function fetchQuota(auth = getActiveAuth()) {
+async function fetchQuota(auth = getActiveAuth(), allowRetryExtract = true) {
   if (!auth) return;
   DOM.userQuota.textContent = '🔄 获取额度中...';
   DOM.userQuota.style.color = 'var(--text-sub)';
@@ -553,7 +687,15 @@ async function fetchQuota(auth = getActiveAuth()) {
       method: 'GET',
       headers: buildAuthHeaders(auth, { 'Cache-Control': 'no-cache' })
     });
-    if (!res.ok) throw new Error(await readResponseError(res));
+    if (!res.ok) {
+      if (res.status === 401 && allowRetryExtract) {
+        const refetched = await tryExtractTokenFromOpenTabs(false);
+        if (refetched && refetched.ok && refetched.token && refetched.token !== auth.secret) {
+          return await fetchQuota(getActiveAuth(), false);
+        }
+      }
+      throw new Error(await readResponseError(res));
+    }
 
     const data = await res.json();
     const used = Number(data.subscription?.character_count || 0);
@@ -562,6 +704,9 @@ async function fetchQuota(auth = getActiveAuth()) {
 
     DOM.userQuota.textContent = `额度: ${used} / ${total} (剩余 ${appState.quotaRemaining})`;
     DOM.userQuota.style.color = appState.quotaRemaining < 1000 ? '#ef4444' : 'var(--text-sub)';
+    DOM.currentAliasDisplay.textContent = `${AUTH_LABEL}: ${auth.name}`;
+    DOM.currentAliasDisplay.style.color = '#10b981';
+    DOM.statusDot.style.background = '#10b981';
   } catch (err) {
     appState.quotaRemaining = 0;
     DOM.userQuota.textContent = `❌ 额度获取失败: ${err.message}`;
@@ -569,7 +714,7 @@ async function fetchQuota(auth = getActiveAuth()) {
   }
 }
 
-async function fetchVoices(auth = getActiveAuth()) {
+async function fetchVoices(auth = getActiveAuth(), allowRetryExtract = true) {
   if (!auth) return;
   DOM.voiceSelect.innerHTML = '<option>加载声音列表中...</option>';
 
@@ -588,11 +733,19 @@ async function fetchVoices(auth = getActiveAuth()) {
       const res = await fetch(pageUrl, {
         headers: buildAuthHeaders(auth)
       });
-      if (!res.ok) throw new Error(await readResponseError(res));
+      if (!res.ok) {
+        if (res.status === 401 && allowRetryExtract) {
+          const refetched = await tryExtractTokenFromOpenTabs(false);
+          if (refetched && refetched.ok && refetched.token && refetched.token !== auth.secret) {
+            return await fetchVoices(getActiveAuth(), false);
+          }
+        }
+        throw new Error(await readResponseError(res));
+      }
 
       const data = await res.json();
       if (data?.detail?.status === 'invalid_authorization_header') {
-        throw new Error('凭据已过期或无效');
+        throw new Error('凭据已过期或无效，请在 ElevenLabs 网页刷新一下');
       }
       const batch = Array.isArray(data.voices) ? data.voices : [];
       allVoices.push(...batch);
@@ -1092,8 +1245,12 @@ async function previewCardFirstSentence(card) {
   const rawText = card.textarea ? card.textarea.value.trim() : '';
   const firstSentence = extractFirstSentence(rawText);
   if (!firstSentence) return showStatus('⚠️ 请先输入文案后再试听第一句');
-  const auth = getActiveAuth();
-  if (!auth) return alert('未检测到可用 Token，请先打开 ElevenLabs 网页并触发一次请求。');
+  let auth = getActiveAuth();
+  if (!auth || isTokenExpired(auth.secret)) {
+    const extracted = await tryExtractTokenFromOpenTabs(false);
+    if (extracted && extracted.ok) auth = getActiveAuth();
+  }
+  if (!auth) return alert('未检测到可用 Token，请先打开 ElevenLabs 网页刷新一下，或点击左侧「🔍 提取网页 Token / 📋 粘贴 Token」。');
   const voiceId = DOM.voiceSelect.value;
   if (!voiceId || voiceId.includes('失败') || voiceId.includes('等待')) {
     return showStatus('⚠️ 请先选择一个可用声音');
@@ -1556,6 +1713,7 @@ function buildVoiceSettingsForModel(targetModelId, preferredSettings) {
 }
 
 async function requestTtsStreamWithFallback({ auth, voiceId, text, modelId, voiceSettings, signal }) {
+  let activeAuth = auth;
   const primaryModel = appState.workingFallbackModelId || modelId || 'eleven_v4';
   const primarySettings = appState.workingFallbackModelId
     ? buildVoiceSettingsForModel(primaryModel, voiceSettings)
@@ -1573,7 +1731,7 @@ async function requestTtsStreamWithFallback({ auth, voiceId, text, modelId, voic
     }
     const fetchOptions = {
       method: 'POST',
-      headers: buildAuthHeaders(auth, { 'content-type': 'application/json' }),
+      headers: buildAuthHeaders(activeAuth, { 'content-type': 'application/json' }),
       body: JSON.stringify(reqBody)
     };
     if (signal) fetchOptions.signal = signal;
@@ -1583,16 +1741,27 @@ async function requestTtsStreamWithFallback({ auth, voiceId, text, modelId, voic
   let firstResponse = await sendRequest(primaryModel, primarySettings, true);
   if (firstResponse.ok) return firstResponse;
 
+  if (firstResponse.status === 401) {
+    const refetched = await tryExtractTokenFromOpenTabs(false);
+    if (refetched && refetched.ok && refetched.token && refetched.token !== activeAuth.secret) {
+      activeAuth = getActiveAuth() || activeAuth;
+      firstResponse = await sendRequest(primaryModel, primarySettings, true);
+      if (firstResponse.ok) return firstResponse;
+    }
+  }
+
   const firstError = await readResponseError(firstResponse);
   // 若是凭据失效或余额彻底耗尽，则直接报错，不作无谓重试
   if (firstResponse.status === 401 || /invalid_authorization|unauthorized|quota_exceeded|insufficient_credit/i.test(firstError)) {
     throw new Error(firstError);
   }
 
+  let effectsAllowed = true;
   // 若启用了音频效果且接口返回参数校验类错误，尝试剥离 audio_effects 重试一次同模型
-  if (activeEffects && [400, 404, 422].includes(firstResponse.status) && /audio_effects|environment|filter_preset|background_noise|effects/i.test(firstError)) {
+  if (activeEffects && Object.keys(activeEffects).length > 0 && [400, 404, 422].includes(firstResponse.status)) {
     const plainRes = await sendRequest(primaryModel, primarySettings, false);
     if (plainRes.ok) return plainRes;
+    effectsAllowed = false;
   }
 
   const hasEmotionTag = /\[\s*[A-Za-z\u4e00-\u9fa5][^\]]{0,300}\]/.test(String(text || ''));
@@ -1605,7 +1774,7 @@ async function requestTtsStreamWithFallback({ auth, voiceId, text, modelId, voic
   for (const candidateModel of fallbackChain) {
     if (signal?.aborted) signal.throwIfAborted();
     const candidateSettings = buildVoiceSettingsForModel(candidateModel, voiceSettings);
-    const retryResponse = await sendRequest(candidateModel, candidateSettings);
+    const retryResponse = await sendRequest(candidateModel, candidateSettings, effectsAllowed);
     if (retryResponse.ok) {
       appState.workingFallbackModelId = candidateModel;
       return retryResponse;
@@ -1660,8 +1829,12 @@ function buildAudioFilename(text, index) {
 
 async function startBatchGeneration() {
   if (appState.generationController) return;
-  const auth = getActiveAuth();
-  if (!auth) return alert('未检测到可用 Token，请先打开 ElevenLabs 网页并触发一次请求。');
+  let auth = getActiveAuth();
+  if (!auth || isTokenExpired(auth.secret)) {
+    const extracted = await tryExtractTokenFromOpenTabs(false);
+    if (extracted && extracted.ok) auth = getActiveAuth();
+  }
+  if (!auth) return alert('未检测到可用 Token，请先打开 ElevenLabs 网页刷新一下，或点击左侧「🔍 提取网页 Token / 📋 粘贴 Token」。');
 
   const textareas = Array.from(DOM.listContainer.querySelectorAll('textarea'));
   const validEntries = textareas
@@ -2676,9 +2849,9 @@ function initVoiceCleanup() {
 // 🎛️ ElevenLabs 音频效果 (Audio Effects) 与 🔄 GitHub 自动检查更新
 // ==========================================
 const HELPER_GITHUB_REPO = 'golsaysea/ElevenLabs-Voice-Helper';
-const HELPER_EXT_VERSION = '3.5.2';
+const HELPER_EXT_VERSION = '3.5.3';
 const HELPER_MANIFEST_PATH = 'packages/elevenlabs-token-helper/manifest.json';
-const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.2.zip';
+const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.3.zip';
 
 function buildAudioEffectsPayload() {
   const envId = DOM.audioEffectEnv && DOM.audioEffectEnv.value ? String(DOM.audioEffectEnv.value).trim() : '';

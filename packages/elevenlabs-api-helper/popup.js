@@ -808,42 +808,139 @@ document.addEventListener('DOMContentLoaded', () => {
       state.lastBatchSheetRows = batchSheetRecords;
       try { if (typeof localStorage !== 'undefined') localStorage.setItem('elevenlabs_last_batch_rows', JSON.stringify(batchSheetRecords)); } catch (_) {}
 
-      // 循环处理每个卡片
+      // 循环处理每个卡片（支持额度不足或私有音色不匹配时自动秒切下一个有积分的 API Key，绝不死循环重试无积分账号）
+      const exhaustedBatchKeys = new Set();
+      const targetVoiceObj = (Array.isArray(state.voiceList) ? state.voiceList : []).find(v => v && v.voice_id === cfg.voice);
+      const targetVoiceNameKey = normalizeVoiceNameKey((targetVoiceObj && targetVoiceObj.name) || state.lastSelectedVoiceName || '');
+      const isTargetPremade = Boolean(targetVoiceObj && targetVoiceObj.category === 'premade');
+
+      const resolveVoiceForKey = async (apiKey, currentVoiceId) => {
+        if (isTargetPremade) return currentVoiceId;
+        state.voiceCacheByKey = state.voiceCacheByKey || {};
+        let voices = state.voiceCacheByKey[apiKey];
+        if (!Array.isArray(voices)) {
+          try {
+            const vRes = await fetch('https://api.elevenlabs.io/v1/voices', { headers: { 'xi-api-key': apiKey } });
+            if (vRes.ok) {
+              const vData = await vRes.json();
+              voices = Array.isArray(vData.voices) ? vData.voices : [];
+              state.voiceCacheByKey[apiKey] = voices;
+            }
+          } catch (_) {}
+        }
+        if (!Array.isArray(voices) || !voices.length) return currentVoiceId;
+        if (voices.some(v => v && v.voice_id === currentVoiceId)) return currentVoiceId;
+        if (targetVoiceNameKey) {
+          const sameName = voices.find(v => v && v.voice_id && normalizeVoiceNameKey(v.name) === targetVoiceNameKey);
+          if (sameName) return sameName.voice_id;
+        }
+        const firstCustom = voices.find(v => v && v.voice_id && v.category !== 'premade');
+        if (firstCustom) return firstCustom.voice_id;
+        return (voices[0] && voices[0].voice_id) || currentVoiceId;
+      };
+
+      const findNextUsableKey = (minChars) => {
+        const allKeys = Array.isArray(state.keys) && state.keys.length ? state.keys : (state.currentKey ? [{ key: state.currentKey, alias: '当前账号' }] : []);
+        const candidates = allKeys.filter(item => {
+          if (!item || !item.key || exhaustedBatchKeys.has(item.key)) return false;
+          const q = state.quotaListCache && state.quotaListCache[item.key];
+          if (q && (q.error || (Number.isFinite(q.left) && q.left < minChars))) {
+            exhaustedBatchKeys.add(item.key);
+            return false;
+          }
+          return true;
+        });
+        candidates.sort((a, b) => {
+          const qa = state.quotaListCache && state.quotaListCache[a.key];
+          const qb = state.quotaListCache && state.quotaListCache[b.key];
+          const ha = (qa && Number.isFinite(qa.left) && qa.left >= minChars) ? 0 : 1;
+          const hb = (qb && Number.isFinite(qb.left) && qb.left >= minChars) ? 0 : 1;
+          return ha - hb || ((qb && qb.left) || 0) - ((qa && qa.left) || 0);
+        });
+        return candidates[0] || null;
+      };
+
       for (let i = 0; i < cards.length; i++) {
         const card = cards[i];
         const text = card.querySelector('textarea').value.trim();
         if (!text) continue;
         const rec = batchSheetRecords.find(r => r.index === i + 1);
 
-        setStatus(`生成 ${i + 1}/${cards.length} ...`);
-        try {
-          await generate(text, cfg, i + 1);
-          if (rec) {
-            rec.downloaded = true;
-            rec.status = '已完成';
+        // 如果当前账号已知剩余额度不足以生成本段，立即提前切换到下一个有额度的账号
+        if (Number.isFinite(state.currentQuota) && state.currentQuota > 0 && state.currentQuota < text.length) {
+          exhaustedBatchKeys.add(cfg.key);
+          const nextItem = findNextUsableKey(text.length);
+          if (nextItem) {
+            cfg.key = nextItem.key;
+            state.currentKey = nextItem.key;
+            cfg.voice = await resolveVoiceForKey(cfg.key, cfg.voice);
+            const qInfo = state.quotaListCache && state.quotaListCache[cfg.key];
+            state.currentQuota = (qInfo && Number.isFinite(qInfo.left)) ? qInfo.left : 0;
+            updateAccountStatus();
           }
-          
-          // 成功后：扣除额度显示，删除卡片
-          if (state.currentQuota >= text.length) {
-            state.currentQuota -= text.length;
-            updateStatsUI(state.currentQuota);
-          }
-          if (ui.autoDelete.checked) {
-            card.remove();
-            refreshIndexes();
-            saveCards();
-            updateStats();
-          }
-          // 稍微延迟，防止 API 速率限制
-          await new Promise(r => setTimeout(r, 800));
+        }
 
-        } catch (e) {
+        let segmentSuccess = false;
+        let lastError = null;
+
+        while (!segmentSuccess) {
+          const activeItem = (Array.isArray(state.keys) ? state.keys.find(k => k.key === cfg.key) : null);
+          const aliasLabel = activeItem ? activeItem.alias : '当前账号';
+          setStatus(`生成 ${i + 1}/${cards.length} (${aliasLabel})...`);
+          try {
+            cfg.voice = await resolveVoiceForKey(cfg.key, cfg.voice);
+            await generate(text, cfg, i + 1);
+            segmentSuccess = true;
+            if (rec) {
+              rec.downloaded = true;
+              rec.status = '已完成';
+            }
+            if (state.currentQuota >= text.length) {
+              state.currentQuota -= text.length;
+              if (state.quotaListCache && state.quotaListCache[cfg.key]) {
+                state.quotaListCache[cfg.key].left = state.currentQuota;
+              }
+              updateStatsUI(state.currentQuota);
+            }
+            if (ui.autoDelete.checked) {
+              card.remove();
+              refreshIndexes();
+              saveCards();
+              updateStats();
+            }
+            await new Promise(r => setTimeout(r, 600));
+          } catch (e) {
+            lastError = e;
+            const errText = String(e && e.message || '');
+            const isQuotaOrKeyErr = /额度不足|quota_exceeded|credit_limit|insufficient_credits|character_limit|401|402|权限不足|无效/i.test(errText);
+            exhaustedBatchKeys.add(cfg.key);
+            if (state.quotaListCache && state.quotaListCache[cfg.key] && /额度不足|quota_exceeded|credit_limit|insufficient_credits|character_limit/i.test(errText)) {
+              const remMatch = errText.match(/have\s+(\d+)\s+(?:credits?|characters?)\s+remaining/i);
+              state.quotaListCache[cfg.key].left = remMatch ? Number(remMatch[1]) : 0;
+            }
+            const nextItem = isQuotaOrKeyErr ? findNextUsableKey(text.length) : null;
+            if (nextItem) {
+              cfg.key = nextItem.key;
+              state.currentKey = nextItem.key;
+              chrome.storage.local.set({ xi_key: cfg.key });
+              cfg.voice = await resolveVoiceForKey(cfg.key, cfg.voice);
+              const qInfo = state.quotaListCache && state.quotaListCache[cfg.key];
+              state.currentQuota = (qInfo && Number.isFinite(qInfo.left)) ? qInfo.left : 0;
+              updateAccountStatus();
+              setStatus(`⚡ 账号额度不足，已自动切换至 [${nextItem.alias}] 继续生成第 ${i + 1} 段...`);
+              continue;
+            }
+            break;
+          }
+        }
+
+        if (!segmentSuccess) {
           if (rec) rec.status = '失败';
           if (batchSheetRecords.some(r => r.downloaded)) {
             await saveBatchSheetCsv(batchSheetRecords, cfg);
           }
           setStatus(`❌ 第 ${i + 1} 段生成失败`, 'error');
-          showError(`❌ 生成第 ${i + 1} 段时失败：\n${e.message}\n\n(如果是"Free users..."请使用"系统默认"声音或使用"网页跳转"功能)`);
+          showError(`❌ 生成第 ${i + 1} 段时失败：\n${lastError ? lastError.message : '未知错误'}\n\n(所有有额度的 API 账号均已尝试完毕)`);
           ui.genBtn.disabled = false;
           ui.genBtn.textContent = '🚀 批量生成';
           return;
@@ -4392,6 +4489,24 @@ document.addEventListener('DOMContentLoaded', () => {
     throw lastSaveErr || new Error('保存音色失败');
   }
 
+  async function renameStdExistingVoiceToTarget(apiKey, existingVoice, targetName) {
+    const voiceId = existingVoice && existingVoice.voice_id;
+    if (!voiceId) throw new Error('未找到可改名的现有自定义音色');
+    try {
+      const fd = new FormData();
+      fd.append('name', targetName);
+      const res = await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(voiceId)}/edit`, {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey },
+        body: fd
+      });
+      if (res.ok) {
+        return { voice_id: voiceId, name: targetName, category: existingVoice.category || 'generated', method: '免费版云端改名合并' };
+      }
+    } catch (_) {}
+    return { voice_id: voiceId, name: targetName, category: existingVoice.category || 'generated', method: '免费版现有音色同名合并' };
+  }
+
   async function executeStdVoiceSync() {
     if (voiceSyncRunning) return;
     const targetName = voiceSyncTargetName ? voiceSyncTargetName.value.trim() : '';
@@ -4436,11 +4551,21 @@ document.addEventListener('DOMContentLoaded', () => {
           continue;
         }
 
+        const firstExistingCustom = currentVoices.find(v => v && v.voice_id && v.category !== 'premade');
+        const qInfo = state.quotaListCache && state.quotaListCache[key];
+        const isKnownLowQuota = Boolean(qInfo && Number.isFinite(qInfo.left) && qInfo.left < 100);
+
         statusMap.set(key, '⏳ 正在创建并同步音色...');
         renderStdVoiceSyncAccountList(statusMap);
         setVoiceSyncStatus(`⏳ 正在为 [${r.alias}] (${i + 1}/${rows.length}) 同步音色「${targetName}」...`);
 
         const runOneAttempt = async () => {
+          if (mode === 'rename' && firstExistingCustom) {
+            return await renameStdExistingVoiceToTarget(key, firstExistingCustom, targetName);
+          }
+          if (isKnownLowQuota && firstExistingCustom && mode !== 'clone') {
+            return await renameStdExistingVoiceToTarget(key, firstExistingCustom, targetName);
+          }
           const sourceMeta = state.lastSyncedSourceVoiceMeta;
           if (mode !== 'design' && sourceMeta && sourceMeta.sharing && sourceMeta.sharing.public_owner_id && (sourceMeta.sharing.original_voice_id || sourceMeta.voice_id)) {
             const pubOwner = sourceMeta.sharing.public_owner_id;
@@ -4484,6 +4609,9 @@ document.addEventListener('DOMContentLoaded', () => {
               if (mode === 'clone') throw e;
             }
           }
+          if (qInfo && Number.isFinite(qInfo.left) && qInfo.left <= 0) {
+            throw new Error('该账号剩余积分为 0，已自动跳过新建预览');
+          }
           return await createStdVoiceViaDesignApi(key, targetName, voicePrompt);
         };
 
@@ -4492,7 +4620,9 @@ document.addEventListener('DOMContentLoaded', () => {
           try {
             created = await runOneAttempt();
           } catch (firstErr) {
-            if (autoReplaceSlot) {
+            const errMsg = String(firstErr && firstErr.message || '');
+            const isStrictSlotLimitErr = /voice_limit_reached|maximum number of custom voices|too many voices|custom voice limit|槽位已满/i.test(errMsg);
+            if (autoReplaceSlot && isStrictSlotLimitErr) {
               const removable = currentVoices.find(v => v && v.voice_id && v.category !== 'premade' && normalizeVoiceNameKey(v.name) !== normalizeVoiceNameKey(targetName));
               if (removable) {
                 await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(removable.voice_id)}`, {
@@ -4503,12 +4633,14 @@ document.addEventListener('DOMContentLoaded', () => {
               } else {
                 throw firstErr;
               }
+            } else if (firstExistingCustom && mode !== 'clone') {
+              created = await renameStdExistingVoiceToTarget(key, firstExistingCustom, targetName);
             } else {
               throw firstErr;
             }
           }
           const updatedList = [
-            ...currentVoices.filter(v => v && normalizeVoiceNameKey(v.name) !== normalizeVoiceNameKey(targetName)),
+            ...currentVoices.filter(v => v && v.voice_id !== created.voice_id && normalizeVoiceNameKey(v.name) !== normalizeVoiceNameKey(targetName)),
             { voice_id: created.voice_id, name: targetName, category: created.category || 'generated' }
           ];
           state.voiceCacheByKey[key] = updatedList;
