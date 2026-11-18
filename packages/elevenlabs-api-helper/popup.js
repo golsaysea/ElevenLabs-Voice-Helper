@@ -1056,7 +1056,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (prevValue && visibleVoices.some(v => v.voice_id === prevValue)) {
       ui.voice.value = prevValue;
+    } else if (state.lastSelectedVoiceName) {
+      const matchedByName = visibleVoices.find(v => normalizeVoiceNameKey(v.name) === normalizeVoiceNameKey(state.lastSelectedVoiceName));
+      if (matchedByName) ui.voice.value = matchedByName.voice_id;
     }
+    const curVoiceObj = visibleVoices.find(v => v.voice_id === ui.voice.value);
+    if (curVoiceObj && curVoiceObj.name) state.lastSelectedVoiceName = curVoiceObj.name;
   }
 
   async function loadVoices(key, savedId = null) {
@@ -1528,7 +1533,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if (ui.sim) ui.sim.addEventListener('input', (e) => updateVal('sim', e.target.value));
   if (ui.style) ui.style.addEventListener('input', (e) => updateVal('style', e.target.value));
   if (ui.boost) ui.boost.addEventListener('change', (e) => chrome.storage.local.set({ 'xi_boost': e.target.checked }));
-  if (ui.voice) ui.voice.addEventListener('change', (e) => chrome.storage.local.set({ 'xi_voice': e.target.value }));
+  if (ui.voice) ui.voice.addEventListener('change', (e) => {
+    chrome.storage.local.set({ 'xi_voice': e.target.value });
+    const vObj = (Array.isArray(state.voiceList) ? state.voiceList : []).find(v => v && v.voice_id === e.target.value);
+    if (vObj && vObj.name) state.lastSelectedVoiceName = vObj.name;
+  });
 
   function updateVal(type, val) {
     const d = parseFloat(val).toFixed(2);
@@ -3445,9 +3454,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 🔄 GitHub 自动检查更新与提示下载
   const GITHUB_REPO = 'golsaysea/ElevenLabs-Batch-TTS-Pro';
-  const CURRENT_EXT_VERSION = '6.8.1';
+  const CURRENT_EXT_VERSION = '6.9.0';
   const REMOTE_MANIFEST_PATH = 'packages/elevenlabs-batch-standard/manifest.json';
-  const DEFAULT_ZIP_NAME = 'elevenlabs-batch-standard-v6.8.1.zip';
+  const DEFAULT_ZIP_NAME = 'elevenlabs-batch-standard-v6.9.0.zip';
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const githubUpdateBanner = document.getElementById('githubUpdateBanner');
   const githubUpdateText = document.getElementById('githubUpdateText');
@@ -4120,5 +4129,447 @@ document.addEventListener('DOMContentLoaded', () => {
       if (autoTagStyleSelect && s.autoTagStyle) autoTagStyleSelect.value = s.autoTagStyle;
     }
   });
+
+  // ==========================================
+  // 🔁 15. 跨 API 账号一键复制/同步音色（支持免费号 Voice Design 与付费号原声克隆 v6.9）
+  // ==========================================
+  const syncVoicesBtn = document.getElementById('syncVoicesBtn');
+  const voiceSyncModal = document.getElementById('voiceSyncModal');
+  const closeVoiceSyncBtn = document.getElementById('closeVoiceSyncBtn');
+  const cancelVoiceSyncBtn = document.getElementById('cancelVoiceSyncBtn');
+  const voiceSyncSummary = document.getElementById('voiceSyncSummary');
+  const voiceSyncTargetName = document.getElementById('voiceSyncTargetName');
+  const voiceSyncModeSelect = document.getElementById('voiceSyncModeSelect');
+  const voiceSyncPromptInput = document.getElementById('voiceSyncPromptInput');
+  const voiceSyncAutoReplaceSlot = document.getElementById('voiceSyncAutoReplaceSlot');
+  const voiceSyncAccountList = document.getElementById('voiceSyncAccountList');
+  const voiceSyncStatus = document.getElementById('voiceSyncStatus');
+  const startVoiceSyncBtn = document.getElementById('startVoiceSyncBtn');
+  let voiceSyncRunning = false;
+
+  function setVoiceSyncStatus(msg, type = 'normal') {
+    if (!voiceSyncStatus) return;
+    voiceSyncStatus.textContent = msg;
+    voiceSyncStatus.classList.remove('error', 'success');
+    if (type === 'error') voiceSyncStatus.classList.add('error');
+    if (type === 'success') voiceSyncStatus.classList.add('success');
+  }
+
+  function inferVoiceDesignPrompt(voiceName, sourceMeta = null) {
+    const rawDesc = sourceMeta && typeof sourceMeta.description === 'string' ? sourceMeta.description.trim() : '';
+    if (rawDesc.length >= 24) return rawDesc.slice(0, 900);
+
+    const n = String(voiceName || '').toLowerCase();
+    const labels = (sourceMeta && sourceMeta.labels) || {};
+    const traits = [];
+
+    if (/女孩|少女|girl|young female/.test(n) || (labels.gender === 'female' && labels.age === 'young')) {
+      traits.push('a soulful, expressive young female voice');
+    } else if (/女|female|woman|lady|sister|mother/.test(n) || labels.gender === 'female') {
+      if (/40|中年|middle/.test(n) || labels.age === 'middle_aged') traits.push('a warm, gentle, soothing middle-aged female voice');
+      else if (/老|奶奶|old/.test(n) || labels.age === 'old') traits.push('a wise, warm, comforting older female voice');
+      else traits.push('a warm, clear, expressive female voice');
+    } else if (/青年|小伙|少年|boy|young male/.test(n) || (labels.gender === 'male' && labels.age === 'young')) {
+      traits.push('a warm, emotional, resonant young male voice');
+    } else if (/老|爷爷|长者|old|elder|father/.test(n) || labels.age === 'old') {
+      traits.push('a deep, wise, reverent older male voice');
+    } else {
+      traits.push('a deep, warm, resonant and expressive male voice');
+    }
+
+    if (/南部|south|southern|gospel|福音/.test(n)) {
+      traits.push('from the American South with heartfelt Gospel warmth');
+    } else if (/英国|英音|british/.test(n) || /british/i.test(labels.accent || '')) {
+      traits.push('with a clear, natural British accent');
+    } else {
+      traits.push('with a clear, natural American accent');
+    }
+
+    if (/唱|歌|sing|vocal|melodic/.test(n)) {
+      traits.push('featuring a powerful, emotional singing style, rich vibrato, sustained melodic notes, and soulful resonance');
+    } else if (/祈祷|祷告|牧师|神父|prayer|sermon|reverent/.test(n)) {
+      traits.push('with a reverent, comforting, spiritual prayer and storytelling delivery and gentle pacing');
+    } else if (/温柔|治愈|gentle|soft|calm|哄睡|电台/.test(n)) {
+      traits.push('with a soft, tender, soothing, and empathetic conversational tone');
+    } else if (/深沉|磁性|deep|baritone|marcus|电影|解说/.test(n)) {
+      traits.push('with rich baritone depth, crisp articulation, and authoritative narrative presence');
+    } else {
+      traits.push('with natural emotional depth, clear pronunciation, and engaging delivery');
+    }
+
+    return `A studio-quality recording of ${traits.join(', ')}.`;
+  }
+
+  function analyzeStdVoiceSyncTargets(targetName) {
+    const cleanTargetKey = normalizeVoiceNameKey(targetName);
+    const items = getAvailableKeysList();
+    state.voiceCacheByKey = state.voiceCacheByKey || {};
+    if (state.currentKey && Array.isArray(state.voiceList) && state.voiceList.length > 0) {
+      state.voiceCacheByKey[state.currentKey] = state.voiceList;
+    }
+
+    const rows = items.map((item, idx) => {
+      const voices = Array.isArray(state.voiceCacheByKey[item.key]) ? state.voiceCacheByKey[item.key] : [];
+      const matched = cleanTargetKey
+        ? voices.find(v => v && v.category !== 'premade' && normalizeVoiceNameKey(v.name) === cleanTargetKey)
+          || voices.find(v => v && normalizeVoiceNameKey(v.name) === cleanTargetKey)
+        : null;
+      const customVoices = voices.filter(v => v && v.category && v.category !== 'premade');
+      return {
+        item,
+        index: idx + 1,
+        alias: item.alias || `账号 ${idx + 1}`,
+        hasVoice: Boolean(matched),
+        matchedVoice: matched || null,
+        customVoices,
+        libraryLoaded: Array.isArray(state.voiceCacheByKey[item.key])
+      };
+    });
+    const hasCount = rows.filter(r => r.hasVoice).length;
+    const missingCount = rows.length - hasCount;
+    return { rows, total: rows.length, hasCount, missingCount };
+  }
+
+  function renderStdVoiceSyncAccountList(statusOverrides = new Map()) {
+    if (!voiceSyncAccountList) return;
+    const targetName = voiceSyncTargetName ? voiceSyncTargetName.value.trim() : '';
+    const { rows, total, hasCount, missingCount } = analyzeStdVoiceSyncTargets(targetName);
+
+    if (voiceSyncSummary) {
+      voiceSyncSummary.textContent = targetName
+        ? `目标音色「${targetName}」：共 ${total} 个 API 账号 · ✅ 已有同名音色 ${hasCount} 个 · ⏳ 待同步创建 ${missingCount} 个`
+        : `当前共 ${total} 个 API 账号 · 请先输入或选择要统一同步的音色名称`;
+    }
+    if (startVoiceSyncBtn && !voiceSyncRunning) {
+      startVoiceSyncBtn.textContent = missingCount > 0
+        ? `🚀 一键同步到缺失此音色的 API 账号 (${missingCount})`
+        : `✅ 全部账号均已拥有此音色 (可点击重新核验)`;
+      startVoiceSyncBtn.disabled = total === 0 || !targetName;
+    }
+
+    voiceSyncAccountList.innerHTML = '';
+    if (rows.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'voice-cleanup-group-title normal';
+      empty.textContent = '⚠️ 尚未添加 API Key，请先在主界面或设置中添加 API Key。';
+      voiceSyncAccountList.appendChild(empty);
+      return;
+    }
+
+    rows.forEach((r) => {
+      const row = document.createElement('div');
+      row.className = 'voice-cleanup-item';
+      const overrideText = statusOverrides.get(r.item.key);
+
+      const left = document.createElement('div');
+      left.className = 'voice-cleanup-left';
+
+      const badge = document.createElement('span');
+      if (overrideText) {
+        badge.className = `voice-cleanup-badge ${overrideText.startsWith('✅') ? 'keep' : overrideText.startsWith('❌') ? 'dup' : 'cat'}`;
+        badge.textContent = overrideText;
+      } else if (r.hasVoice) {
+        badge.className = 'voice-cleanup-badge keep';
+        badge.textContent = `✅ 已有同名 (ID: ...${String(r.matchedVoice.voice_id || '').slice(-5)})`;
+      } else {
+        badge.className = 'voice-cleanup-badge dup';
+        badge.textContent = r.libraryLoaded ? `⏳ 待同步 (已用槽位: ${r.customVoices.length})` : '⏳ 待检测并同步';
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'voice-cleanup-name';
+      nameSpan.textContent = `${r.alias} (••••${String(r.item.key || '').slice(-4)})`;
+
+      left.appendChild(badge);
+      left.appendChild(nameSpan);
+      row.appendChild(left);
+      voiceSyncAccountList.appendChild(row);
+    });
+  }
+
+  async function openStdVoiceSyncModal() {
+    if (!voiceSyncModal) return;
+    const selectedId = (ui.customVoiceId && ui.customVoiceId.value.trim()) || (ui.voice && ui.voice.value) || '';
+    const currentVoiceObj = (Array.isArray(state.voiceList) ? state.voiceList : []).find(v => v && v.voice_id === selectedId);
+    if (voiceSyncTargetName) {
+      if (currentVoiceObj && currentVoiceObj.name) {
+        voiceSyncTargetName.value = String(currentVoiceObj.name).replace(/^★\s*/, '').trim();
+      } else if (!voiceSyncTargetName.value.trim()) {
+        voiceSyncTargetName.value = '美国南部小女孩深情唱歌';
+      }
+    }
+    const currentName = voiceSyncTargetName ? voiceSyncTargetName.value.trim() : '';
+    if (voiceSyncPromptInput) {
+      voiceSyncPromptInput.value = inferVoiceDesignPrompt(currentName, currentVoiceObj);
+    }
+    renderStdVoiceSyncAccountList();
+    voiceSyncModal.classList.remove('hidden');
+
+    if (state.currentKey && selectedId && /^[A-Za-z0-9_-]{10,}$/.test(selectedId)) {
+      try {
+        const res = await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(selectedId)}`, {
+          headers: { 'xi-api-key': state.currentKey }
+        });
+        if (res.ok) {
+          const meta = await res.json();
+          state.lastSyncedSourceVoiceMeta = { ...meta, sourceKey: state.currentKey };
+          if (voiceSyncPromptInput && !voiceSyncPromptInput.dataset.userEdited) {
+            voiceSyncPromptInput.value = inferVoiceDesignPrompt(currentName || meta.name, meta);
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  function closeStdVoiceSyncModal() {
+    if (voiceSyncRunning) return;
+    if (voiceSyncModal) voiceSyncModal.classList.add('hidden');
+  }
+
+  async function createStdVoiceViaDesignApi(apiKey, voiceName, voicePrompt) {
+    const cleanPrompt = String(voicePrompt || '').trim().length >= 20
+      ? String(voicePrompt).trim().slice(0, 950)
+      : inferVoiceDesignPrompt(voiceName);
+    const previewSampleText = 'Hello, thank you for listening to my voice! I am speaking clearly and expressively so you can hear the natural warmth, emotional depth, and smooth rhythm of this voice across different sentences.';
+
+    let generatedVoiceId = '';
+    const designEndpoints = [
+      'https://api.elevenlabs.io/v1/text-to-voice/design',
+      'https://api.elevenlabs.io/v1/text-to-voice/create-previews'
+    ];
+    let lastPreviewErr = null;
+    for (const ep of designEndpoints) {
+      try {
+        const res = await fetch(ep, {
+          method: 'POST',
+          headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ voice_description: cleanPrompt, text: previewSampleText })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const firstPreview = Array.isArray(data && data.previews) ? data.previews[0] : null;
+          generatedVoiceId = (firstPreview && firstPreview.generated_voice_id) || (data && data.generated_voice_id) || '';
+          if (generatedVoiceId) break;
+        } else {
+          lastPreviewErr = new Error(await readElevenError(res, '声音设计预览生成失败'));
+          if (res.status === 401 || res.status === 403) break;
+        }
+      } catch (e) {
+        lastPreviewErr = e;
+      }
+    }
+    if (!generatedVoiceId) throw lastPreviewErr || new Error('未能从 Voice Design 接口获取到 generated_voice_id');
+
+    const createEndpoints = [
+      'https://api.elevenlabs.io/v1/text-to-voice',
+      'https://api.elevenlabs.io/v1/text-to-voice/create-voice-from-preview'
+    ];
+    let lastSaveErr = null;
+    for (const ep of createEndpoints) {
+      try {
+        const res = await fetch(ep, {
+          method: 'POST',
+          headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            voice_name: voiceName,
+            voice_description: cleanPrompt,
+            generated_voice_id: generatedVoiceId
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.voice_id) {
+            return { voice_id: data.voice_id, name: voiceName, category: 'generated', is_owner: true, method: 'Voice Design (免费版兼容)' };
+          }
+        } else {
+          lastSaveErr = new Error(await readElevenError(res, '保存设计的音色失败'));
+          if (res.status !== 404 && res.status !== 405) break;
+        }
+      } catch (e) {
+        lastSaveErr = e;
+      }
+    }
+    throw lastSaveErr || new Error('保存音色失败');
+  }
+
+  async function executeStdVoiceSync() {
+    if (voiceSyncRunning) return;
+    const targetName = voiceSyncTargetName ? voiceSyncTargetName.value.trim() : '';
+    if (!targetName) return setVoiceSyncStatus('⚠️ 请先填写要统一同步的目标音色名称', 'error');
+    const voicePrompt = voiceSyncPromptInput ? voiceSyncPromptInput.value.trim() : '';
+    if (voicePrompt.length < 20) return setVoiceSyncStatus('⚠️ 音色特征描述提示词至少需要 20 个字符', 'error');
+    const mode = voiceSyncModeSelect ? voiceSyncModeSelect.value : 'auto';
+    const autoReplaceSlot = Boolean(voiceSyncAutoReplaceSlot && voiceSyncAutoReplaceSlot.checked);
+
+    const { rows } = analyzeStdVoiceSyncTargets(targetName);
+    if (rows.length === 0) return setVoiceSyncStatus('⚠️ 请先添加至少一个 API Key', 'error');
+
+    voiceSyncRunning = true;
+    if (startVoiceSyncBtn) startVoiceSyncBtn.disabled = true;
+    const statusMap = new Map();
+    let syncedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const key = r.item.key;
+        if (!Array.isArray(state.voiceCacheByKey[key])) {
+          statusMap.set(key, '🔍 检查声音库...');
+          renderStdVoiceSyncAccountList(statusMap);
+          try {
+            const vRes = await fetch('https://api.elevenlabs.io/v1/voices', { headers: { 'xi-api-key': key } });
+            if (vRes.ok) {
+              const vData = await vRes.json();
+              state.voiceCacheByKey[key] = Array.isArray(vData.voices) ? vData.voices : [];
+            }
+          } catch (_) {}
+        }
+
+        const currentVoices = Array.isArray(state.voiceCacheByKey[key]) ? state.voiceCacheByKey[key] : [];
+        const existingSame = currentVoices.find(v => v && normalizeVoiceNameKey(v.name) === normalizeVoiceNameKey(targetName));
+        if (existingSame) {
+          skippedCount++;
+          statusMap.set(key, `✅ 已有同名 (ID: ...${String(existingSame.voice_id).slice(-5)})`);
+          renderStdVoiceSyncAccountList(statusMap);
+          continue;
+        }
+
+        statusMap.set(key, '⏳ 正在创建并同步音色...');
+        renderStdVoiceSyncAccountList(statusMap);
+        setVoiceSyncStatus(`⏳ 正在为 [${r.alias}] (${i + 1}/${rows.length}) 同步音色「${targetName}」...`);
+
+        const runOneAttempt = async () => {
+          const sourceMeta = state.lastSyncedSourceVoiceMeta;
+          if (mode !== 'design' && sourceMeta && sourceMeta.sharing && sourceMeta.sharing.public_owner_id && (sourceMeta.sharing.original_voice_id || sourceMeta.voice_id)) {
+            const pubOwner = sourceMeta.sharing.public_owner_id;
+            const origId = sourceMeta.sharing.original_voice_id || sourceMeta.voice_id;
+            const addRes = await fetch(`https://api.elevenlabs.io/v1/voices/add/${encodeURIComponent(pubOwner)}/${encodeURIComponent(origId)}`, {
+              method: 'POST',
+              headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ new_name: targetName })
+            });
+            if (addRes.ok) {
+              const addData = await addRes.json();
+              if (addData && addData.voice_id) {
+                return { voice_id: addData.voice_id, name: targetName, category: 'professional', method: '共享库添加' };
+              }
+            }
+          }
+          if ((mode === 'clone' || mode === 'auto') && sourceMeta && sourceMeta.preview_url) {
+            try {
+              const pRes = await fetch(sourceMeta.preview_url);
+              if (pRes.ok) {
+                const blob = await pRes.blob();
+                const fd = new FormData();
+                fd.append('name', targetName);
+                fd.append('description', voicePrompt.slice(0, 500));
+                fd.append('files', blob, 'voice_sample.mp3');
+                const ivcRes = await fetch('https://api.elevenlabs.io/v1/voices/add', {
+                  method: 'POST',
+                  headers: { 'xi-api-key': key },
+                  body: fd
+                });
+                if (ivcRes.ok) {
+                  const ivcData = await ivcRes.json();
+                  if (ivcData && ivcData.voice_id) {
+                    return { voice_id: ivcData.voice_id, name: targetName, category: 'cloned', method: '原声样本克隆' };
+                  }
+                } else if (mode === 'clone') {
+                  throw new Error(await readElevenError(ivcRes, '原声克隆失败'));
+                }
+              }
+            } catch (e) {
+              if (mode === 'clone') throw e;
+            }
+          }
+          return await createStdVoiceViaDesignApi(key, targetName, voicePrompt);
+        };
+
+        try {
+          let created;
+          try {
+            created = await runOneAttempt();
+          } catch (firstErr) {
+            if (autoReplaceSlot) {
+              const removable = currentVoices.find(v => v && v.voice_id && v.category !== 'premade' && normalizeVoiceNameKey(v.name) !== normalizeVoiceNameKey(targetName));
+              if (removable) {
+                await fetch(`https://api.elevenlabs.io/v1/voices/${encodeURIComponent(removable.voice_id)}`, {
+                  method: 'DELETE',
+                  headers: { 'xi-api-key': key }
+                }).catch(() => {});
+                created = await runOneAttempt();
+              } else {
+                throw firstErr;
+              }
+            } else {
+              throw firstErr;
+            }
+          }
+          const updatedList = [
+            ...currentVoices.filter(v => v && normalizeVoiceNameKey(v.name) !== normalizeVoiceNameKey(targetName)),
+            { voice_id: created.voice_id, name: targetName, category: created.category || 'generated' }
+          ];
+          state.voiceCacheByKey[key] = updatedList;
+          if (key === state.currentKey) {
+            state.voiceList = updatedList;
+            state.lastSelectedVoiceName = targetName;
+            renderVoiceSelectOptions(created.voice_id);
+          }
+          syncedCount++;
+          statusMap.set(key, `✅ 同步成功 (${created.method} · ...${String(created.voice_id).slice(-5)})`);
+        } catch (err) {
+          failedCount++;
+          statusMap.set(key, `❌ 失败: ${String(err && err.message || '同步失败').slice(0, 38)}`);
+        }
+        renderStdVoiceSyncAccountList(statusMap);
+      }
+
+      state.lastSelectedVoiceName = targetName;
+      renderVoiceSelectOptions();
+      const summaryMsg = `🎉 音色「${targetName}」同步完成：新增同步 ${syncedCount} 个账号，已有跳过 ${skippedCount} 个${failedCount > 0 ? `，失败 ${failedCount} 个` : ''}！`;
+      setVoiceSyncStatus(summaryMsg, failedCount > 0 && syncedCount === 0 ? 'error' : 'success');
+      setStatus(summaryMsg);
+    } finally {
+      voiceSyncRunning = false;
+      renderStdVoiceSyncAccountList(statusMap);
+    }
+  }
+
+  if (syncVoicesBtn) syncVoicesBtn.addEventListener('click', openStdVoiceSyncModal);
+  if (closeVoiceSyncBtn) closeVoiceSyncBtn.addEventListener('click', closeStdVoiceSyncModal);
+  if (cancelVoiceSyncBtn) cancelVoiceSyncBtn.addEventListener('click', closeStdVoiceSyncModal);
+  if (voiceSyncModal) {
+    voiceSyncModal.addEventListener('click', (e) => {
+      if (e.target === voiceSyncModal) closeStdVoiceSyncModal();
+    });
+    voiceSyncModal.querySelectorAll('.voice-sync-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        if (voiceSyncTargetName && chip.dataset.name) voiceSyncTargetName.value = chip.dataset.name;
+        if (voiceSyncPromptInput && chip.dataset.prompt) {
+          voiceSyncPromptInput.value = chip.dataset.prompt;
+          voiceSyncPromptInput.dataset.userEdited = 'true';
+        }
+        renderStdVoiceSyncAccountList();
+      });
+    });
+  }
+  if (voiceSyncTargetName) {
+    voiceSyncTargetName.addEventListener('input', () => {
+      if (voiceSyncPromptInput && !voiceSyncPromptInput.dataset.userEdited) {
+        voiceSyncPromptInput.value = inferVoiceDesignPrompt(voiceSyncTargetName.value);
+      }
+      renderStdVoiceSyncAccountList();
+    });
+  }
+  if (voiceSyncPromptInput) {
+    voiceSyncPromptInput.addEventListener('input', () => {
+      voiceSyncPromptInput.dataset.userEdited = 'true';
+    });
+  }
+  if (startVoiceSyncBtn) {
+    startVoiceSyncBtn.addEventListener('click', executeStdVoiceSync);
+  }
 
 });

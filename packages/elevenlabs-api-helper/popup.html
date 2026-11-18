@@ -66,7 +66,10 @@
       <div class="control-group">
         <div class="voice-label-row">
           <label style="margin:0;">Voice (选择声音)</label>
-          <button id="cleanVoicesBtn" type="button" class="btn-voice-clean" title="一键清理重名声音或复制错的声音">🧹 清理声音</button>
+          <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+            <button id="syncVoicesBtn" type="button" class="btn-voice-clean" title="一键通过 API 复制/同步当前音色到其他所有账号（免费版账号自动通过官方 Voice Design 创建同名音色）">🔁 同步音色</button>
+            <button id="cleanVoicesBtn" type="button" class="btn-voice-clean" title="一键清理重名声音或复制错的声音">🧹 清理声音</button>
+          </div>
         </div>
         <div class="voice-control-box">
           <div class="row">
@@ -568,6 +571,59 @@
           <div class="voice-cleanup-footer-btns">
             <button type="button" id="cancelVoiceCleanupBtn" class="btn-ghost">关闭</button>
             <button type="button" id="confirmDeleteVoicesBtn" class="btn-primary btn-danger-clean">🧹 一键清理已勾选声音 (0)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🔁 跨账号 API 音色同步与免费号声音设计同步弹窗 (v6.9) -->
+  <div id="voiceSyncModal" class="modal-overlay hidden">
+    <div class="modal-panel voice-cleanup-modal-panel">
+      <div class="modal-header">
+        <div>
+          <h3>🔁 跨 API 账号一键复制/同步音色</h3>
+          <div id="voiceSyncSummary" class="helper-text-small" style="margin-top:2px;">支持免费版 API 账号（自动通过官方 Voice Design 生成同名音色）与付费版账号（原声克隆/共享库添加）</div>
+        </div>
+        <button id="closeVoiceSyncBtn" class="close-btn" title="关闭">✕</button>
+      </div>
+      <div class="modal-body voice-cleanup-body">
+        <div class="tool-field">
+          <label for="voiceSyncTargetName">1. 要同步的统一音色名称（所有 API 账号将统一创建此名称的音色）</label>
+          <input type="text" id="voiceSyncTargetName" class="voice-cleanup-search" placeholder="例如：美国南部小女孩深情唱歌 / 白人青年唱歌 / Marcus">
+        </div>
+        <div class="tool-field">
+          <label for="voiceSyncModeSelect">2. 同步方式（免费版账号推荐使用默认的「智能自动兼容」或「免费版声音设计」）</label>
+          <select id="voiceSyncModeSelect">
+            <option value="auto" selected>🤖 智能自动兼容（免费号自动用 Voice Design 创建同名音色 · 付费号优先样本克隆/共享库）</option>
+            <option value="design">🎨 免费版兼容 · 声音设计同步 (Voice Design API，所有免费/付费账号通用)</option>
+            <option value="clone">🧬 仅原声样本克隆 (Instant Voice Cloning API，仅限 Starter 及以上付费账号)</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="voiceSyncPromptInput">3. 音色特征描述提示词 (Voice Design Prompt · 至少 20 字符，已根据当前所选声音自动生成，可自由修改)</label>
+          <textarea id="voiceSyncPromptInput" rows="3" placeholder="描述音色的性别、年龄、口音、音质与情感风格（建议英文或中英结合，20~1000字符）..."></textarea>
+          <div class="tool-preset-chips">
+            <span class="chip-label">快捷音色模板:</span>
+            <button type="button" class="tool-chip voice-sync-chip" data-name="美国南部小女孩深情唱歌" data-prompt="A powerful, raspy, soulful young female voice from the American South with warm emotional Gospel singing style, rich vibrato, and clear natural resonance.">🎤 南部灵魂女声唱歌</button>
+            <button type="button" class="tool-chip voice-sync-chip" data-name="白人青年唱歌-有感情的歌唱" data-prompt="A warm, emotional young male voice with a clear, soulful melodic singing tone, expressive vibrato, and heartfelt delivery.">🎵 青年深情歌唱男声</button>
+            <button type="button" class="tool-chip voice-sync-chip" data-name="虔诚温暖祈祷长者" data-prompt="A deep, warm, reverent older male voice with a calm, comforting, and spiritual storytelling tone and gentle pacing.">🙏 温暖虔诚祈祷长者</button>
+            <button type="button" class="tool-chip voice-sync-chip" data-name="40岁女性温柔" data-prompt="A gentle, warm, soothing 40-year-old female voice with a calm, empathetic, and natural conversational delivery.">🌙 40岁温柔治愈女声</button>
+            <button type="button" class="tool-chip voice-sync-chip" data-name="Marcus (深沉男声)" data-prompt="A deep, resonant, authoritative baritone male voice with crisp articulation and engaging narrative presence.">📖 深沉磁性叙事男声</button>
+          </div>
+        </div>
+        <div class="tool-options-row" style="padding:6px 10px;">
+          <label class="tool-check" title="免费账号最多允许 3 个自定义声音；勾选后若某个账号已满 3 个槽位，会自动删除该账号上 1 个非当前名称的旧自定义声音以腾出空间">
+            <input type="checkbox" id="voiceSyncAutoReplaceSlot" checked>
+            <span>♻️ 若目标账号音色槽位已满（免费号限 3 个），自动替换 1 个旧自定义音色</span>
+          </label>
+        </div>
+        <div id="voiceSyncAccountList" class="voice-cleanup-list" style="max-height:185px;"></div>
+        <div class="voice-cleanup-footer">
+          <div id="voiceSyncStatus" class="voice-cleanup-status">提示：点击下方「🚀 一键同步到缺失账号」，插件会自动跳过已有同名音色的账号，并为其余账号创建同名音色。</div>
+          <div class="voice-cleanup-footer-btns">
+            <button type="button" id="cancelVoiceSyncBtn" class="btn-ghost">关闭</button>
+            <button type="button" id="startVoiceSyncBtn" class="btn-primary">🚀 一键同步到缺失账号</button>
           </div>
         </div>
       </div>

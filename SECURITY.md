@@ -4,7 +4,7 @@
 
 | 版本 (Version) | 支持状态 (Supported) |
 |---|---|
-| `v3.5.1` | ✅ 支持 |
+| `v3.5.2` | ✅ 支持 |
 
 ## 漏洞报告 (Reporting a Vulnerability)
 
@@ -20,7 +20,7 @@
 
 每次版本发布均包含以下可验证构件：
 
-- 经过合规校验的扩展压缩包：`elevenlabs-token-helper-v3.5.1.zip`、`elevenlabs-api-helper-v6.8.1.zip`
+- 经过合规校验的扩展压缩包：`elevenlabs-token-helper-v3.5.2.zip`、`elevenlabs-api-helper-v6.9.0.zip`
 - `SHA256SUMS.txt`（SHA-256 哈希校验清单）
 - `SBOM.spdx.json`（SPDX 2.3 标准软件物料清单）
 - `BUILD-PROVENANCE.txt`（构建溯源元数据）

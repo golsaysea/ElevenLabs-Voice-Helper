@@ -2676,9 +2676,9 @@ function initVoiceCleanup() {
 // 🎛️ ElevenLabs 音频效果 (Audio Effects) 与 🔄 GitHub 自动检查更新
 // ==========================================
 const HELPER_GITHUB_REPO = 'golsaysea/ElevenLabs-Voice-Helper';
-const HELPER_EXT_VERSION = '3.5.1';
+const HELPER_EXT_VERSION = '3.5.2';
 const HELPER_MANIFEST_PATH = 'packages/elevenlabs-token-helper/manifest.json';
-const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.1.zip';
+const HELPER_DEFAULT_ZIP = 'elevenlabs-token-helper-v3.5.2.zip';
 
 function buildAudioEffectsPayload() {
   const envId = DOM.audioEffectEnv && DOM.audioEffectEnv.value ? String(DOM.audioEffectEnv.value).trim() : '';
