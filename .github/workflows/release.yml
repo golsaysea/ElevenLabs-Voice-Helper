@@ -44,9 +44,11 @@ jobs:
             "SECURITY-ARTIFACTS.md"
           )
 
+          $tokVer = (Get-Content -Raw -Encoding UTF8 "packages/elevenlabs-token-helper/manifest.json" | ConvertFrom-Json).version
+          $apiVer = (Get-Content -Raw -Encoding UTF8 "packages/elevenlabs-api-helper/manifest.json" | ConvertFrom-Json).version
           $assets = @(
-            @{ Name = "elevenlabs-token-helper-v3.5.3"; Path = "packages/elevenlabs-token-helper" },
-            @{ Name = "elevenlabs-api-helper-v6.9.1"; Path = "packages/elevenlabs-api-helper" }
+            @{ Name = "elevenlabs-token-helper-v$tokVer"; Path = "packages/elevenlabs-token-helper" },
+            @{ Name = "elevenlabs-api-helper-v$apiVer"; Path = "packages/elevenlabs-api-helper" }
           )
 
           foreach ($asset in $assets) {
@@ -81,6 +83,8 @@ jobs:
             "$hash  $($_.Name)"
           } | Set-Content -LiteralPath (Join-Path $dist "SHA256SUMS.txt") -Encoding utf8NoBOM
 
+          $tokVer = (Get-Content -Raw -Encoding UTF8 "packages/elevenlabs-token-helper/manifest.json" | ConvertFrom-Json).version
+          $apiVer = (Get-Content -Raw -Encoding UTF8 "packages/elevenlabs-api-helper/manifest.json" | ConvertFrom-Json).version
           $created = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $namespaceCommit = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } else { "manual" }
           $sbom = [ordered]@{
@@ -95,9 +99,9 @@ jobs:
             }
             packages = @(
               [ordered]@{
-                name = "elevenlabs-token-helper-v3.5.3"
+                name = "elevenlabs-token-helper-v$tokVer"
                 SPDXID = "SPDXRef-Package-1"
-                versionInfo = "v3.5.3"
+                versionInfo = "v$tokVer"
                 downloadLocation = "https://github.com/$env:GITHUB_REPOSITORY"
                 filesAnalyzed = $false
                 licenseConcluded = "GPL-3.0-only"
@@ -105,9 +109,9 @@ jobs:
                 copyrightText = "NOASSERTION"
               },
               [ordered]@{
-                name = "elevenlabs-api-helper-v6.9.1"
+                name = "elevenlabs-api-helper-v$apiVer"
                 SPDXID = "SPDXRef-Package-2"
-                versionInfo = "v3.5.3"
+                versionInfo = "v$apiVer"
                 downloadLocation = "https://github.com/$env:GITHUB_REPOSITORY"
                 filesAnalyzed = $false
                 licenseConcluded = "GPL-3.0-only"
