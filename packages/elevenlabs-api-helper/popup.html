@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>ElevenLabs 批量工坊 Pro</title>
+  <title>ElevenLabs 批量工坊 Pro 6.9.2</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -292,6 +292,8 @@
           <div class="key-manager-box">
             <div class="key-group-toolbar">
               <select id="keyGroupFilter" title="选择分组"></select>
+              <input id="keySearch" type="search" aria-label="搜索 API" placeholder="搜索备注(如 账号8)/尾号" style="flex:1;min-width:110px;">
+              <button id="renameKeysSequentialBtn" class="btn-text-small" type="button" title="按当前顺序一键重命名为 账号 1、账号 2...">顺序重命名</button>
               <button id="refreshGroupBtn" class="btn-text-small" title="只刷新当前分组额度">刷新本组</button>
             </div>
             <div class="key-list-scrollable" id="keyListContainer"></div>

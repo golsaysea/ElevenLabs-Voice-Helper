@@ -68,6 +68,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 设置与 Key 管理
     keyList: getEl('keyListContainer'),
     keyGroupFilter: getEl('keyGroupFilter'),
+    keySearch: getEl('keySearch'),
+    renameKeysSequentialBtn: getEl('renameKeysSequentialBtn'),
     refreshGroupBtn: getEl('refreshGroupBtn'),
     newGroup: getEl('newKeyGroup'),
     newAlias: getEl('newKeyAlias'),
@@ -376,11 +378,19 @@ document.addEventListener('DOMContentLoaded', () => {
     return state.activeGroup;
   }
 
-  function getKeysInActiveGroup() {
+  function getKeysInActiveGroup(search = '') {
     const group = ensureActiveGroup();
+    const raw = String(search || '').trim().toLowerCase();
+    const compact = raw.replace(/\s+/g, '');
     return state.keys
       .map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => getKeyGroup(item) === group);
+      .filter(({ item, idx }) => {
+        if (getKeyGroup(item) !== group) return false;
+        if (!compact) return true;
+        const alias = String(item.alias || '').toLowerCase();
+        const tail = String(item.key || '').slice(-4).toLowerCase();
+        return alias.includes(raw) || alias.replace(/\s+/g, '').includes(compact) || tail.includes(compact) || `#${idx + 1}` === compact;
+      });
   }
 
   function saveKeyList() {
@@ -912,13 +922,14 @@ document.addEventListener('DOMContentLoaded', () => {
           } catch (e) {
             lastError = e;
             const errText = String(e && e.message || '');
-            const isQuotaOrKeyErr = /额度不足|quota_exceeded|credit_limit|insufficient_credits|character_limit|401|402|权限不足|无效/i.test(errText);
+            const failedAlias = `${aliasLabel} · ••••${String(cfg.key || '').slice(-4)}`;
+            const shouldFailover = /额度不足|quota_exceeded|credit_limit|insufficient_credits|character_limit|401|402|429|500|502|503|504|权限不足|无效|连接|超时|网络|failed to fetch|network|timeout|abort/i.test(errText);
             exhaustedBatchKeys.add(cfg.key);
             if (state.quotaListCache && state.quotaListCache[cfg.key] && /额度不足|quota_exceeded|credit_limit|insufficient_credits|character_limit/i.test(errText)) {
               const remMatch = errText.match(/have\s+(\d+)\s+(?:credits?|characters?)\s+remaining/i);
               state.quotaListCache[cfg.key].left = remMatch ? Number(remMatch[1]) : 0;
             }
-            const nextItem = isQuotaOrKeyErr ? findNextUsableKey(text.length) : null;
+            const nextItem = shouldFailover ? findNextUsableKey(text.length) : null;
             if (nextItem) {
               cfg.key = nextItem.key;
               state.currentKey = nextItem.key;
@@ -927,9 +938,10 @@ document.addEventListener('DOMContentLoaded', () => {
               const qInfo = state.quotaListCache && state.quotaListCache[cfg.key];
               state.currentQuota = (qInfo && Number.isFinite(qInfo.left)) ? qInfo.left : 0;
               updateAccountStatus();
-              setStatus(`⚡ 账号额度不足，已自动切换至 [${nextItem.alias}] 继续生成第 ${i + 1} 段...`);
+              setStatus(`⚡ 账号 [${failedAlias}] 异常（${errText.slice(0, 40)}），已跳过并切换至 [${nextItem.alias}] 继续生成第 ${i + 1} 段...`);
               continue;
             }
+            lastError._failedAccountLabel = failedAlias;
             break;
           }
         }
@@ -939,8 +951,9 @@ document.addEventListener('DOMContentLoaded', () => {
           if (batchSheetRecords.some(r => r.downloaded)) {
             await saveBatchSheetCsv(batchSheetRecords, cfg);
           }
-          setStatus(`❌ 第 ${i + 1} 段生成失败`, 'error');
-          showError(`❌ 生成第 ${i + 1} 段时失败：\n${lastError ? lastError.message : '未知错误'}\n\n(所有有额度的 API 账号均已尝试完毕)`);
+          const failedAcct = (lastError && lastError._failedAccountLabel) || '当前账号';
+          setStatus(`❌ 第 ${i + 1} 段生成失败（出错账号：${failedAcct}）`, 'error');
+          showError(`❌ 生成第 ${i + 1} 段时失败（出错账号：${failedAcct}）：\n${lastError ? lastError.message : '未知错误'}\n\n已尝试跳过故障账号，可在设置中搜索账号名称检查或删除。`);
           ui.genBtn.disabled = false;
           ui.genBtn.textContent = '🚀 批量生成';
           return;
@@ -1332,6 +1345,19 @@ document.addEventListener('DOMContentLoaded', () => {
   if (ui.quickKeyBtn) ui.quickKeyBtn.addEventListener('click', handleQuickKey);
   if (ui.quickKeyInput) ui.quickKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleQuickKey(); });
   if (ui.keyGroupFilter) ui.keyGroupFilter.addEventListener('change', (e) => setActiveGroup(e.target.value));
+  if (ui.keySearch) ui.keySearch.addEventListener('input', () => renderKeyList(false));
+  if (ui.renameKeysSequentialBtn) {
+    ui.renameKeysSequentialBtn.addEventListener('click', () => {
+      if (!state.keys.length) return;
+      if (!confirm(`确认按当前顺序将全部 ${state.keys.length} 个 API 账号依次重命名为「账号 1」到「账号 ${state.keys.length}」？\n仅修改本地备注名，不会改动 API Key 或额度。`)) return;
+      state.keys = state.keys.map((item, idx) => ({ ...item, alias: `账号 ${idx + 1}` }));
+      saveKeyList();
+      updateAccountStatus();
+      renderKeyList();
+      if (ui.accountDropdown && !ui.accountDropdown.classList.contains('hidden')) renderQuickDropdown();
+      setStatus(`已按顺序重命名为 账号 1 ～ 账号 ${state.keys.length}`);
+    });
+  }
   if (ui.refreshGroupBtn) ui.refreshGroupBtn.addEventListener('click', () => renderKeyList(true));
 
   function renderKeyList(forceRefresh = false) {
@@ -1343,9 +1369,10 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const visibleItems = getKeysInActiveGroup();
+    const searchQuery = ui.keySearch ? ui.keySearch.value : '';
+    const visibleItems = getKeysInActiveGroup(searchQuery);
     if (visibleItems.length === 0) {
-      ui.keyList.innerHTML = '<div class="empty-tip">当前分组为空</div>';
+      ui.keyList.innerHTML = searchQuery.trim() ? '<div class="empty-tip">没有匹配的 API</div>' : '<div class="empty-tip">当前分组为空</div>';
       return;
     }
 

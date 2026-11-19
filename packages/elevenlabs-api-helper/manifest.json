@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ElevenLabs 批量工坊 (自动化版)",
-  "version": "6.9.1",
+  "version": "6.9.2",
   "description": "超大窗口，支持跨 API 账号一键复制/同步音色（兼容免费号）、批量开头标签与智能自动加标签、音频效果、GitHub 自动更新提示。",
   "permissions": [
     "storage",
