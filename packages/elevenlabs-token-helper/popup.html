@@ -52,9 +52,18 @@
 
       <div class="quick-tools" style="margin-top: 20px;">
         <label>📁 导出子文件夹 (静默下载免弹窗)</label>
-        <div class="folder-group" style="display: flex; gap: 8px;">
+        <div class="folder-group" style="display: flex; gap: 6px; align-items: center;">
            <input type="text" id="quickFolderInput" placeholder="子文件夹名称，默认：批量导出" title="保存到浏览器下载目录下的 ElevenLabs_Pro/批量导出">
+           <button type="button" id="pickLocalFolderBtn" class="icon-btn-small folder-pick-btn" title="选择电脑本地文件夹（读取其中已有编号并延续顺序直接保存）">📁</button>
            <a id="openFolderBtn" class="export-folder-link" href="#" title="在文件资源管理器中打开语音文件夹">📂 打开语音文件夹</a>
+        </div>
+        <div class="folder-seq-row">
+           <label class="folder-seq-toggle" title="自动读取当前目标文件夹中已有音频的最高序号，新生成的音频接着往后排">
+             <input type="checkbox" id="continueFolderSeq" checked>
+             <span>延续文件夹序号</span>
+           </label>
+           <span id="folderSeqHint" class="folder-seq-hint" aria-live="polite">检测序号中...</span>
+           <button type="button" id="unlinkLocalFolderBtn" class="folder-unlink-btn hidden" title="取消绑定本地文件夹，改回默认浏览器下载目录">✕</button>
         </div>
         <div id="exportFolderStatus" class="export-folder-status" role="status" aria-live="polite"></div>
       </div>

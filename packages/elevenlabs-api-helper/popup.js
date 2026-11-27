@@ -53,6 +53,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // 路径与内容区
     baseFolderInput: getEl('baseFolderInput'),
     quickFolder: getEl('quickFolderInput'),
+    pickLocalFolderBtn: getEl('pickLocalFolderBtn'),
+    unlinkLocalFolderBtn: getEl('unlinkLocalFolderBtn'),
+    continueFolderSeq: getEl('continueFolderSeq'),
+    folderSeqHint: getEl('folderSeqHint'),
     openFolder: getEl('quickOpenFolderBtn'),
     container: getEl('listContainer'), // 核心容器
     addBtn: getEl('addCardBtn'),
@@ -163,6 +167,9 @@ document.addEventListener('DOMContentLoaded', () => {
     currentQuota: 0,
     folder: '',
     baseFolder: 'ElevenLabs_Pro',
+    continueFolderSeq: true,
+    linkedDirHandle: null,
+    folderScanCache: null,
     voiceList: [],
     hiddenVoiceIds: [],
     dedupeVoiceSelect: true,
@@ -531,6 +538,8 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.set({ 'xi_key': state.currentKey });
       }
       state.baseFolder = res.base_folder_name || 'ElevenLabs_Pro';
+      state.continueFolderSeq = res.continue_folder_seq !== false;
+      if (ui.continueFolderSeq) ui.continueFolderSeq.checked = state.continueFolderSeq;
 
       if (ui.quickFolder) ui.quickFolder.value = state.folder;
       if (ui.baseFolderInput) ui.baseFolderInput.value = state.baseFolder;
@@ -569,6 +578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateStats();
       }
+      restoreLinkedDirectoryHandle().then(() => refreshFolderSeqHint()).catch(() => refreshFolderSeqHint());
     });
   }
   init(); // 执行初始化
@@ -603,13 +613,143 @@ document.addEventListener('DOMContentLoaded', () => {
     return true;
   }
 
-  function buildBatchSheetCsv(records) {
+  function parseAudioSequenceInfo(filePathOrName) {
+    const raw = String(filePathOrName || '').trim();
+    if (!raw) return null;
+    const base = raw.split(/[\\/]/).pop() || '';
+    if (!/\.(mp3|wav|mp4|m4a|ogg|aac|flac|webm|opus)$/i.test(base)) return null;
+    const match = base.match(/^(\d+)(?:[_\-.\s]|(?=\.[^.]+$))/);
+    if (!match || match[1].length > 5) return null;
+    const index = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(index) || index < 1 || index > 99999) return null;
+    const isZeroPadded = match[1].length >= 2 && match[1].startsWith('0');
+    return { index, padWidth: isZeroPadded ? match[1].length : 0, basename: base };
+  }
+  function normalizeRelFolder(baseFolder, subFolder = '') {
+    const safeSeg = v => String(v || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+|[. ]+$/g, '').trim();
+    const base = safeSeg(baseFolder) || 'ElevenLabs_Pro';
+    const sub = safeSeg(subFolder);
+    return sub ? `${base}/${sub}` : base;
+  }
+  function scanFolderSequences(items, targetRelDir = '', defaultPadWidth = 0) {
+    const targetLower = String(targetRelDir || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').toLowerCase();
+    let maxIndex = 0;
+    let detectedPadWidth = 0;
+    for (const item of items || []) {
+      const nameOrPath = typeof item === 'string' ? item : item && item.filename;
+      if (!nameOrPath) continue;
+      if (typeof item === 'object' && (item.exists === false || (item.state && item.state !== 'complete'))) continue;
+      const norm = String(nameOrPath).replace(/\\/g, '/');
+      const lastSlash = norm.lastIndexOf('/');
+      const basename = lastSlash >= 0 ? norm.slice(lastSlash + 1) : norm;
+      if (targetLower) {
+        const parentLower = (lastSlash >= 0 ? norm.slice(0, lastSlash) : '').toLowerCase();
+        if (!parentLower || (parentLower !== targetLower && !parentLower.endsWith('/' + targetLower))) continue;
+      }
+      const parsed = parseAudioSequenceInfo(basename);
+      if (!parsed) continue;
+      if (parsed.index > maxIndex) maxIndex = parsed.index;
+      if (parsed.padWidth > detectedPadWidth) detectedPadWidth = parsed.padWidth;
+    }
+    const padWidth = detectedPadWidth > 0 ? detectedPadWidth : Math.max(0, Number(defaultPadWidth) || 0);
+    return { maxIndex, padWidth, nextIndex: maxIndex + 1 };
+  }
+  function formatSeqNum(index, padWidth = 0) {
+    const n = Math.max(1, Number(index) || 1);
+    return padWidth > 0 ? String(n).padStart(padWidth, '0') : String(n);
+  }
+  let dirHandleDbPromise = null;
+  function openDirHandleDb() {
+    if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB unavailable'));
+    if (!dirHandleDbPromise) {
+      dirHandleDbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('elevenlabs-std-handles', 1);
+        req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('handles')) req.result.createObjectStore('handles'); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => { dirHandleDbPromise = null; reject(req.error); };
+      });
+    }
+    return dirHandleDbPromise;
+  }
+  async function idbHandleOp(mode, fn) {
+    const db = await openDirHandleDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', mode);
+      const req = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => resolve(req.result);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function ensureDirPermission(handle, mode = 'readwrite', promptUser = false) {
+    if (!handle) return false;
+    if (typeof handle.queryPermission !== 'function') return true;
+    try {
+      const cur = await handle.queryPermission({ mode });
+      if (cur === 'granted') return true;
+      if (!promptUser || typeof handle.requestPermission !== 'function') return false;
+      return (await handle.requestPermission({ mode })) === 'granted';
+    } catch (_) { return false; }
+  }
+  async function restoreLinkedDirectoryHandle() {
+    try {
+      const handle = await idbHandleOp('readonly', s => s.get('output_dir'));
+      if (handle && typeof handle === 'object' && handle.name) {
+        state.linkedDirHandle = handle;
+        if (!state.folder && ui.quickFolder) { state.folder = handle.name; ui.quickFolder.value = handle.name; }
+      }
+    } catch (_) { state.linkedDirHandle = null; }
+  }
+  async function clearLinkedDirectoryHandle(silent = false) {
+    state.linkedDirHandle = null;
+    await idbHandleOp('readwrite', s => s.delete('output_dir')).catch(() => {});
+    if (ui.unlinkLocalFolderBtn) ui.unlinkLocalFolderBtn.classList.add('hidden');
+    if (!silent) setStatus('已取消绑定本地文件夹，改回保存到浏览器下载目录');
+    await refreshFolderSeqHint();
+  }
+  async function scanCurrentFolderSequence() {
+    const relDir = normalizeRelFolder(state.baseFolder, state.folder);
+    if (state.linkedDirHandle) {
+      const ok = await ensureDirPermission(state.linkedDirHandle, 'read', false);
+      if (!ok) return { source: 'local_locked', dirName: state.linkedDirHandle.name, maxIndex: 0, padWidth: 0, nextIndex: 1 };
+      const names = [];
+      for await (const entry of state.linkedDirHandle.values()) if (entry && entry.kind === 'file' && entry.name) names.push(entry.name);
+      return { source: 'local', dirName: state.linkedDirHandle.name, ...scanFolderSequences(names, '', 0) };
+    }
+    const items = await new Promise(resolve => {
+      if (!chrome?.downloads?.search) return resolve([]);
+      chrome.downloads.search({ state: 'complete' }, list => resolve((!chrome.runtime?.lastError && Array.isArray(list)) ? list : []));
+    });
+    return { source: 'downloads', dirName: relDir, ...scanFolderSequences(items, relDir, 0) };
+  }
+  let folderScanRevision = 0;
+  let folderScanTimer = null;
+  async function refreshFolderSeqHint() {
+    const rev = ++folderScanRevision;
+    if (ui.unlinkLocalFolderBtn) ui.unlinkLocalFolderBtn.classList.toggle('hidden', !state.linkedDirHandle);
+    try {
+      const scan = await scanCurrentFolderSequence();
+      if (rev !== folderScanRevision) return;
+      state.folderScanCache = scan;
+      if (!ui.folderSeqHint) return;
+      const fmt = n => formatSeqNum(n, scan.padWidth || 0);
+      if (scan.source === 'local_locked') ui.folderSeqHint.textContent = `📁 ${scan.dirName} (需授权读取)`;
+      else if (!state.continueFolderSeq) ui.folderSeqHint.textContent = '已关闭续排 · 从 1 起';
+      else if (scan.maxIndex > 0) ui.folderSeqHint.textContent = `${state.linkedDirHandle ? '📁 ' : ''}已有至 ${fmt(scan.maxIndex)} · 从 ${fmt(scan.nextIndex)} 起`;
+      else ui.folderSeqHint.textContent = `${state.linkedDirHandle ? `📁 ${scan.dirName} · ` : ''}下批从 1 起`;
+    } catch (_) {
+      if (ui.folderSeqHint) ui.folderSeqHint.textContent = '下批从 1 起';
+    }
+  }
+  function scheduleFolderSeqHintRefresh() {
+    clearTimeout(folderScanTimer);
+    folderScanTimer = setTimeout(() => { refreshFolderSeqHint(); }, 180);
+  }
+  function buildBatchSheetCsvLines(records) {
     const escapeCsv = (val) => {
       const str = String(val ?? '').replace(/\r\n?/g, '\n');
       return '"' + str.replace(/"/g, '""') + '"';
     };
-    const header = '序号,音频文件名,分段说明,字数,预计时长,状态,完整文案';
-    const lines = records.map(r => [
+    return records.map(r => [
       escapeCsv(r.indexLabel),
       escapeCsv(r.audioFilename),
       escapeCsv(r.splitNote || '原段'),
@@ -618,14 +758,50 @@ document.addEventListener('DOMContentLoaded', () => {
       escapeCsv(r.status || '已完成'),
       escapeCsv(r.text)
     ].join(','));
-    return '\uFEFF' + [header, ...lines].join('\r\n') + '\r\n';
+  }
+  function buildBatchSheetCsv(records) {
+    const header = '序号,音频文件名,分段说明,字数,预计时长,状态,完整文案';
+    return '\uFEFF' + [header, ...buildBatchSheetCsvLines(records)].join('\r\n') + '\r\n';
+  }
+  async function writeBlobToDirectory(dirHandle, basename, blob) {
+    const dot = basename.lastIndexOf('.');
+    const stem = dot > 0 ? basename.slice(0, dot) : basename;
+    const ext = dot > 0 ? basename.slice(dot) : '';
+    let candidate = basename;
+    for (let attempt = 1; attempt <= 200; attempt++) {
+      let exists = false;
+      try { await dirHandle.getFileHandle(candidate, { create: false }); exists = true; } catch (_) {}
+      if (!exists) break;
+      candidate = `${stem} (${attempt})${ext}`;
+    }
+    const fh = await dirHandle.getFileHandle(candidate, { create: true });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+    return candidate;
   }
 
   async function saveBatchSheetCsv(records, cfg) {
     if (!Array.isArray(records) || !records.length) return;
-    const base = (cfg.baseFolder || 'ElevenLabs_Pro').replace(/[\\:*?"<>|]/g, '_') || 'ElevenLabs_Pro';
-    const sub = cfg.folder ? cfg.folder.replace(/[\\:*?"<>|]/g, '_').trim() : '';
-    const csvPath = sub ? `${base}/${sub}/000_文案对照表.csv` : `${base}/000_文案对照表.csv`;
+    if (cfg && cfg.dirHandle) {
+      try {
+        let existingText = '';
+        try {
+          const eh = await cfg.dirHandle.getFileHandle('000_文案对照表.csv', { create: false });
+          existingText = await (await eh.getFile()).text();
+        } catch (_) {}
+        const finalContent = (existingText && /^(?:\uFEFF)?序号,/.test(existingText))
+          ? (existingText.endsWith('\n') ? existingText : existingText + '\r\n') + buildBatchSheetCsvLines(records).join('\r\n') + '\r\n'
+          : buildBatchSheetCsv(records);
+        const fh = await cfg.dirHandle.getFileHandle('000_文案对照表.csv', { create: true });
+        const w = await fh.createWritable();
+        await w.write(new Blob([finalContent], { type: 'text/csv;charset=utf-8;' }));
+        await w.close();
+        return;
+      } catch (_) {}
+    }
+    const relDir = normalizeRelFolder(cfg.baseFolder, cfg.folder);
+    const csvPath = `${relDir}/000_文案对照表.csv`;
     const csvContent = buildBatchSheetCsv(records);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -691,12 +867,52 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.baseFolderInput.addEventListener('input', (e) => {
       state.baseFolder = e.target.value.trim() || 'ElevenLabs_Pro';
       chrome.storage.local.set({ 'base_folder_name': state.baseFolder });
+      scheduleFolderSeqHintRefresh();
     });
   }
   if (ui.quickFolder) {
     ui.quickFolder.addEventListener('input', (e) => {
       state.folder = e.target.value.trim();
       chrome.storage.local.set({ 'save_folder': state.folder });
+      if (state.linkedDirHandle && state.folder !== state.linkedDirHandle.name) {
+        clearLinkedDirectoryHandle(true);
+      } else {
+        scheduleFolderSeqHintRefresh();
+      }
+    });
+  }
+  if (ui.continueFolderSeq) {
+    ui.continueFolderSeq.addEventListener('change', () => {
+      state.continueFolderSeq = Boolean(ui.continueFolderSeq.checked);
+      chrome.storage.local.set({ continue_folder_seq: state.continueFolderSeq });
+      refreshFolderSeqHint();
+    });
+  }
+  if (ui.unlinkLocalFolderBtn) {
+    ui.unlinkLocalFolderBtn.addEventListener('click', () => clearLinkedDirectoryHandle(false));
+  }
+  if (ui.pickLocalFolderBtn) {
+    ui.pickLocalFolderBtn.addEventListener('click', async () => {
+      if (typeof window.showDirectoryPicker !== 'function') {
+        return showError('当前浏览器不支持直接选择磁盘文件夹；请在左侧直接填写任务子文件夹名，系统同样会自动延续历史编号。');
+      }
+      try {
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        if (!handle) return;
+        state.linkedDirHandle = handle;
+        await idbHandleOp('readwrite', s => s.put(handle, 'output_dir')).catch(() => {});
+        state.folder = handle.name || state.folder;
+        if (ui.quickFolder) ui.quickFolder.value = state.folder;
+        chrome.storage.local.set({ save_folder: state.folder });
+        await refreshFolderSeqHint();
+        const scan = state.folderScanCache;
+        setStatus(scan && scan.maxIndex > 0
+          ? `📁 已绑定「${handle.name}」：已有至 ${formatSeqNum(scan.maxIndex, scan.padWidth)}，将从 ${formatSeqNum(scan.nextIndex, scan.padWidth)} 起直接写入该目录`
+          : `📁 已绑定「${handle.name}」：新音频将直接写入该目录`);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        showError(`选择文件夹失败：${err.message || '未获得权限'}`);
+      }
     });
   }
 
@@ -756,10 +972,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const cards = Array.from(ui.container.querySelectorAll('.card'));
       const texts = cards.map(c => c.querySelector('textarea').value.trim()).filter(t => t);
       if (texts.length === 0) return showError('文案列表为空！请先添加文案。');
+      let activeDirHandle = state.linkedDirHandle || null;
+      if (activeDirHandle) {
+        const granted = await ensureDirPermission(activeDirHandle, 'readwrite', true);
+        if (!granted) return showError(`未获得本地文件夹「${activeDirHandle.name}」的读写权限，请重新点击授权或取消绑定。`);
+      }
 
       // 锁定按钮
       ui.genBtn.disabled = true;
-      
+
+      const folderScan = await scanCurrentFolderSequence();
+      const seqStart = state.continueFolderSeq && folderScan.maxIndex > 0 ? folderScan.nextIndex : 1;
+      const seqPadWidth = state.continueFolderSeq && folderScan.padWidth ? folderScan.padWidth : 0;
+
       // 🌟 修复：获取格式，并显示在状态栏
       const selectedVoiceId = ui.customVoiceId.value.trim() || ui.voice.value;
       const rawFormat = ui.format ? ui.format.value : 'mp3_44100_128';
@@ -773,14 +998,14 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (rawFormat.startsWith('pcm')) {
         fileExt = 'wav';
       }
-      
+
       // 显示正在使用的格式
       const allBatchTexts = cards.map(c => c.querySelector('textarea') ? c.querySelector('textarea').value.trim() : '').join('\n');
       if (textHasBracketAudioTag(allBatchTexts) && TAG_UNSUPPORTED_V2_MODELS.has(ui.model.value)) {
         ensureTagCompatibleModel(allBatchTexts);
       }
       ui.genBtn.textContent = `生成中 (${fileExt.toUpperCase()})...`;
-      setStatus(`🚀 开始批量生成 (模型: ${ui.model.value} · 格式: ${fileExt.toUpperCase()})`);
+      setStatus(`🚀 开始批量生成 (模型: ${ui.model.value} · 格式: ${fileExt.toUpperCase()}${seqStart > 1 ? ` · 从 ${formatSeqNum(seqStart, seqPadWidth)} 续排` : ''})`);
 
       const cfg = {
         key: state.currentKey,
@@ -793,20 +1018,26 @@ document.addEventListener('DOMContentLoaded', () => {
         style: parseFloat(ui.style.value),
         boost: ui.boost.checked,
         folder: state.folder,
-        baseFolder: state.baseFolder
+        baseFolder: state.baseFolder,
+        padWidth: seqPadWidth,
+        dirHandle: activeDirHandle
       };
 
-      const batchSheetRecords = cards.map((card, i) => {
+      let seqOffset = 0;
+      const batchSheetRecords = cards.map((card) => {
         const text = card.querySelector('textarea').value.trim();
         if (!text) return null;
+        const seqNum = seqStart + seqOffset++;
+        const seqLabel = formatSeqNum(seqNum, seqPadWidth);
         const cleanBodyForName = text.replace(/^(?:\s*\[[^\]]{1,300}\]\s*)+/, '').replace(/\[[^\]]{1,80}\]/g, ' ').trim() || text;
-        const safeText = cleanBodyForName.substring(0, 15).replace(/[\n\r]/g, '').replace(/[\\/:*?"<>|]/g, '_').trim() || `audio_${i + 1}`;
+        const safeText = cleanBodyForName.substring(0, 15).replace(/[\n\r]/g, '').replace(/[\\/:*?"<>|]/g, '_').trim() || `audio_${seqLabel}`;
         const est = estimateDuration(text, 1);
         return {
           card,
-          index: i + 1,
-          indexLabel: String(i + 1),
-          audioFilename: `${i + 1}_${safeText}.${fileExt}`,
+          cardPos: cards.indexOf(card),
+          index: seqNum,
+          indexLabel: seqLabel,
+          audioFilename: `${seqLabel}_${safeText}.${fileExt}`,
           splitNote: card.dataset.splitNote || '原段',
           chars: text.length,
           duration: est.formatted,
@@ -874,7 +1105,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const card = cards[i];
         const text = card.querySelector('textarea').value.trim();
         if (!text) continue;
-        const rec = batchSheetRecords.find(r => r.index === i + 1);
+        const rec = batchSheetRecords.find(r => r.card === card);
+        const targetIndex = rec ? rec.index : (i + 1);
 
         // 如果当前账号已知剩余额度不足以生成本段，立即提前切换到下一个有额度的账号
         if (Number.isFinite(state.currentQuota) && state.currentQuota > 0 && state.currentQuota < text.length) {
@@ -899,11 +1131,12 @@ document.addEventListener('DOMContentLoaded', () => {
           setStatus(`生成 ${i + 1}/${cards.length} (${aliasLabel})...`);
           try {
             cfg.voice = await resolveVoiceForKey(cfg.key, cfg.voice);
-            await generate(text, cfg, i + 1);
+            const savedFilename = await generate(text, cfg, targetIndex);
             segmentSuccess = true;
             if (rec) {
               rec.downloaded = true;
               rec.status = '已完成';
+              if (savedFilename) rec.audioFilename = savedFilename;
             }
             if (state.currentQuota >= text.length) {
               state.currentQuota -= text.length;
@@ -956,6 +1189,7 @@ document.addEventListener('DOMContentLoaded', () => {
           showError(`❌ 生成第 ${i + 1} 段时失败（出错账号：${failedAcct}）：\n${lastError ? lastError.message : '未知错误'}\n\n已尝试跳过故障账号，可在设置中搜索账号名称检查或删除。`);
           ui.genBtn.disabled = false;
           ui.genBtn.textContent = '🚀 批量生成';
+          refreshFolderSeqHint();
           return;
         }
       }
@@ -964,6 +1198,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try { if (typeof localStorage !== 'undefined') localStorage.setItem('elevenlabs_last_batch_rows', JSON.stringify(batchSheetRecords)); } catch (_) {}
         await saveBatchSheetCsv(batchSheetRecords, cfg);
       }
+      refreshFolderSeqHint();
       setStatus('✅ 全部完成（已自动保存 000_文案对照表.csv）');
       fetchQuota(cfg.key); // 刷新最新额度
       ui.genBtn.disabled = false;
@@ -1039,19 +1274,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const blob = await resp.blob();
+    // 构建文件名（忽略开头情绪/风格标签）
+    const cleanBodyForName = text.replace(/^(?:\s*\[[^\]]{1,300}\]\s*)+/, '').replace(/\[[^\]]{1,80}\]/g, ' ').trim() || text;
+    const seqLabel = formatSeqNum(index, cfg.padWidth || 0);
+    const safeText = cleanBodyForName.substring(0, 15).replace(/[\n\r]/g, '').replace(/[\\/:*?"<>|]/g, "_").trim() || `audio_${seqLabel}`;
+    const filename = `${seqLabel}_${safeText}.${cfg.fileExt}`;
+
+    if (cfg.dirHandle) {
+      return await writeBlobToDirectory(cfg.dirHandle, filename, blob);
+    }
+
     const reader = new FileReader();
     reader.readAsDataURL(blob);
 
     return new Promise((resolve, reject) => {
       reader.onloadend = () => {
-        // 构建文件名（忽略开头情绪/风格标签）
-        const cleanBodyForName = text.replace(/^(?:\s*\[[^\]]{1,300}\]\s*)+/, '').replace(/\[[^\]]{1,80}\]/g, ' ').trim() || text;
-        const safeText = cleanBodyForName.substring(0, 15).replace(/[\n\r]/g, '').replace(/[\\/:*?"<>|]/g, "_").trim() || `audio_${index}`;
-        let filename = `${index}_${safeText}.${cfg.fileExt}`;
-
-        const base = cfg.baseFolder.replace(/[\\:*?"<>|]/g, "_") || "ElevenLabs_Pro";
-        const sub = cfg.folder ? cfg.folder.replace(/[\\:*?"<>|]/g, "_").trim() : "";
-        const finalPath = sub ? `${base}/${sub}/${filename}` : `${base}/${filename}`;
+        const finalPath = `${normalizeRelFolder(cfg.baseFolder, cfg.folder)}/${filename}`;
 
         chrome.downloads.download({
           url: reader.result,
@@ -1063,7 +1301,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error("下载失败:", chrome.runtime.lastError);
             reject(new Error(chrome.runtime.lastError.message));
           } else {
-            resolve();
+            resolve(filename);
           }
         });
       };
@@ -1566,11 +1804,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // 打开文件夹
   if (ui.openFolder) {
     ui.openFolder.addEventListener('click', () => {
+      if (state.linkedDirHandle) {
+        setStatus(`📁 当前已直接绑定本地文件夹「${state.linkedDirHandle.name}」，音频将直接写入该文件夹`);
+      }
       const sub = state.folder.replace(/[\\:*?"<>|]/g, "_") || "ElevenLabs_Pro";
       chrome.downloads.search({ limit: 10, orderBy: ['-startTime'] }, (items) => {
         let f = false;
         for (let i of items) if (i.exists && i.filename.includes(sub)) { chrome.downloads.show(i.id); f = true; break; }
-        if (!f) chrome.downloads.showDefaultFolder();
+        if (!f && !state.linkedDirHandle) chrome.downloads.showDefaultFolder();
       });
     });
   }

@@ -1,11 +1,11 @@
-# ElevenLabs Voice Helper (ElevenLabs 辅助语音生成插件)
+ ElevenLabs Voice Helper (ElevenLabs 辅助语音生成插件)
 
 Chrome Manifest V3 扩展程序：支持 ElevenLabs 批量语音合成 (TTS)、**批量在开头增加风格/演唱标签 (`🏷️ 开头标签` + `➕ 批量加到开头` + `导入自动加`)**、**智能自动添加情绪与停顿标签 (`🎭 自动添加标签` / `Auto-add tags`)**、**最新官方音频效果 (`🎛️ 音频效果`：空格混响 `Small Room` / `Big Room` / `Hall` + `+ 添加效果` 滤波器与背景环境音)**、**自动检查 GitHub 更新提示与一键下载更新包 (`🔄`)**、多 API 负载均衡与自动故障切换、首句试听缓存 (`🔊 试听首句`)、标点短句智能时长估算、超 3 分钟文案顶部红色提示与手动拆分为 2 段 (`🔴 超3分钟·可拆分`)、一键复制到谷歌表格/Excel (`📋 复制到表格`)、批量导出自动备份 `000_文案对照表.csv`、重名/误复制声音一键清理 (`🧹 清理声音`)，以及 AI 音效 / 免费 BGM 配乐降级生成 / 变声 / 人声提取 / 语音转文字工坊 (`🧰 其他工具`)。
 
 ## 包含版本 (Packages)
 
-- `packages/elevenlabs-token-helper` — **网页 Token 自动识别捕获版** (`v3.5.3`)
-- `packages/elevenlabs-api-helper` — **API 密钥批量辅助版** (`v6.9.2`)
+- `packages/elevenlabs-token-helper` — **网页 Token 自动识别捕获版** (`v3.5.4`)
+- `packages/elevenlabs-api-helper` — **API 密钥批量辅助版** (`v6.9.3`)
 
 ## 核心功能亮点 (Key Features)
 

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>ElevenLabs 批量工坊 Pro 6.9.2</title>
+  <title>ElevenLabs 批量工坊 Pro 6.9.3</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -57,7 +57,16 @@
       <div class="quick-tools">
         <div class="folder-group">
            <input type="text" id="quickFolderInput" placeholder="当前任务子文件夹 (可选)" title="输入名称，将作为主目录下的子文件夹">
+           <button id="pickLocalFolderBtn" type="button" class="tool-btn-icon" title="选择电脑本地文件夹（读取其中已有编号并延续顺序直接保存音频）">📁</button>
            <button id="quickOpenFolderBtn" class="tool-btn-icon" title="打开下载目录">📂</button>
+        </div>
+        <div class="folder-seq-row">
+           <label class="folder-seq-toggle" title="自动读取当前目标文件夹中已有音频的最高序号，新生成的音频接着往后排">
+             <input type="checkbox" id="continueFolderSeq" checked>
+             <span>延续文件夹序号</span>
+           </label>
+           <span id="folderSeqHint" class="folder-seq-hint" aria-live="polite">检测序号中...</span>
+           <button id="unlinkLocalFolderBtn" type="button" class="folder-unlink-btn hidden" title="取消绑定本地文件夹，改回浏览器下载目录">✕</button>
         </div>
       </div>
 

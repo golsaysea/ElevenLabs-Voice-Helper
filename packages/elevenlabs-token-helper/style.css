@@ -52,6 +52,13 @@ select:focus, input[type="text"]:focus, input[type="password"]:focus { border-co
 .icon-btn-small:hover { background: var(--border); }
 .folder-group { flex-wrap: wrap; }
 .folder-group #quickFolderInput { flex: 1; min-width: 0; }
+.folder-pick-btn { padding: 4px 10px; font-size: 14px; flex-shrink: 0; height: 32px; }
+.folder-seq-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--text-sub); margin-top: 6px; flex-wrap: wrap; }
+.folder-seq-toggle { display: inline-flex !important; align-items: center; gap: 4px; cursor: pointer; font-weight: 500 !important; margin: 0 !important; text-transform: none !important; }
+.folder-seq-toggle input { width: auto; margin: 0; cursor: pointer; }
+.folder-seq-hint { font-size: 11px; color: var(--primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+.folder-unlink-btn { width: 18px; height: 18px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--bg-input); color: var(--text-sub); font-size: 10px; line-height: 1; cursor: pointer; flex-shrink: 0; }
+.folder-unlink-btn:hover { color: var(--danger); border-color: var(--danger); }
 .export-folder-link { display: block; width: 100%; color: var(--primary); font-size: 13px; text-decoration: underline; cursor: pointer; padding: 6px 0; }
 .export-folder-link:hover { opacity: 0.8; }
 .export-folder-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
